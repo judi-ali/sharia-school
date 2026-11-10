@@ -7,3 +7,12 @@ body { @apply bg-paper text-ink-900 antialiased; }
 input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
 input[type='number']::-webkit-inner-spin-button,
 input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+html[dir='rtl'] select {
+  background-position: left 0.75rem center;
+  padding-left: 2.5rem;
+  padding-right: 0.75rem;
+}
+
+select:not(:disabled) { cursor: pointer; }
+select:disabled { cursor: not-allowed; }
