@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { fetchOverview, fetchGroups } from '@/app/lib/data';
 import { todayStr, formatDate } from '@/app/lib/utils';
-import { PageHeader } from '@/app/ui/kit';
+import { Notice, PageHeader } from '@/app/ui/kit';
 import { tableWrap, th, td } from '@/app/ui/styles';
 
 export const metadata: Metadata = { title: 'الرئيسية' };
@@ -22,6 +22,17 @@ export default async function Page() {
   return (
     <>
       <PageHeader title="الرئيسية" hint="نظرة سريعة على العام الدراسي الحالي." />
+      {o.missingSchemes > 0 && (
+        <Notice tone="info">
+          {o.missingSchemes} مادة في الخطة الدرسية بلا سلّم علامات (لا يمكن إدخال علاماتها بعد).{' '}
+          <Link href="/dashboard/classes" className="font-medium underline">راجع الصفوف</Link>
+        </Notice>
+      )}
+      {o.provisionalSchemes > 0 && (
+        <Notice tone="info">
+          {o.provisionalSchemes} سلّم علامات مؤقت (التربية الرياضية والأنشطة والعلوم الشرعية). عدّلها من صفحة الصف عند صدور الدفاتر.
+        </Notice>
+      )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {cards.map((c) => (
           <Link key={c.label} href={c.href} className="rounded-xl border border-ink-100 bg-white p-4 transition-colors hover:border-gold-500">

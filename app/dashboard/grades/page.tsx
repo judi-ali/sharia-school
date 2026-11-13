@@ -1,11 +1,15 @@
 import type { Metadata } from 'next';
-import { fetchGradeSheet, fetchGroupAssignments, fetchGroupOptions, fetchScheme } from '@/app/lib/data';
+import Link from 'next/link';
+import {
+  fetchComputedSheet, fetchGradeSheet, fetchGroup, fetchGroupAssignments, fetchGroupOptions, fetchScheme,
+} from '@/app/lib/data';
 import { saveGrades } from '@/app/lib/actions';
 import { semesterLabel, toOptions } from '@/app/lib/labels';
-import { isUuid } from '@/app/lib/utils';
+import { fmtNum, isUuid } from '@/app/lib/utils';
 import { Notice, PageHeader } from '@/app/ui/kit';
 import { AutoSelect } from '@/app/ui/filters';
 import GradeSheet from '@/app/ui/grade-sheet';
+import { tableWrap, td, th } from '@/app/ui/styles';
 
 export const metadata: Metadata = { title: 'العلامات' };
 
@@ -16,14 +20,15 @@ export default async function Page(props: { searchParams?: Promise<{ group?: str
   const semester = sp?.semester === '2' ? 2 : 1;
 
   const subjects = groupId ? await fetchGroupAssignments(groupId) : [];
-  const subjectId = subjects.find((s) => s.subject_id === sp?.subject)?.subject_id ?? '';
-  const [rows, scheme] = groupId && subjectId
+  const subject = subjects.find((s) => s.subject_id === sp?.subject);
+  const subjectId = subject?.subject_id ?? '';
+  const computed = !!subject?.is_parent;
+
+  const [rows, scheme] = groupId && subjectId && !computed
     ? await Promise.all([fetchGradeSheet(groupId, subjectId, semester), fetchScheme(groupId, subjectId)])
     : [[], undefined];
-
-  const max = scheme
-    ? { oral: scheme.oral_max, homework: scheme.homework_max, quiz: scheme.quiz_max, exam: scheme.exam_max, total: scheme.total_max }
-    : null;
+  const sheet = groupId && subjectId && computed ? await fetchComputedSheet(groupId, subjectId, semester) : null;
+  const group = groupId && subjectId && !computed && !scheme ? await fetchGroup(groupId) : null;
 
   return (
     <>
@@ -34,7 +39,7 @@ export default async function Page(props: { searchParams?: Promise<{ group?: str
         <AutoSelect name="semester" label="الفصل الدراسي" options={toOptions(semesterLabel)} defaultValue={String(semester)} />
         {groupId && (
           <AutoSelect name="subject" label="المادة" empty="اختر المادة" defaultValue={subjectId}
-            options={subjects.map((s) => ({ value: s.subject_id, label: s.name }))} />
+            options={subjects.map((s) => ({ value: s.subject_id, label: s.is_parent ? `${s.name} (محسوبة)` : s.name }))} />
         )}
       </form>
 
@@ -44,14 +49,53 @@ export default async function Page(props: { searchParams?: Promise<{ group?: str
           {subjects.length ? 'اختر المادة لعرض جدول العلامات.' : 'لا توجد مواد في خطة صف هذه الشعبة. أضِفها من صفحة الصف.'}
         </p>
       )}
-      {groupId && subjectId && !max && (
-        <div className="mt-5"><Notice tone="info">لا يوجد سلّم علامات لهذا الصف، لذلك لا يوجد حدّ أعظمي للإدخال.</Notice></div>
+
+      {sheet && (
+        <>
+          <div className="mt-5"><Notice tone="info">
+            «{subject?.name}» مادة محسوبة تلقائياً: هي متوسط محصلة {sheet.parts.map((p) => p.name).join(' و')}. لا يمكن تعديلها،
+            وتُدخل علامات كل جزء على حدة.
+          </Notice></div>
+          <div className={tableWrap}>
+            <table className="min-w-full text-sm">
+              <thead className="border-b border-ink-100 bg-ink-50">
+                <tr>
+                  <th className={th}>الطالب</th>
+                  {sheet.parts.map((p) => <th key={p.subject_id} className={th}>{p.name}</th>)}
+                  <th className={`${th} bg-gold-50`}>{subject?.name} (المتوسط)</th>
+                  <th className={th}>المحصلة النهائية</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-ink-100">
+                {sheet.rows.map((r) => (
+                  <tr key={r.enrollment_id}>
+                    <td className={td}>{r.full_name}</td>
+                    {r.partTotals.map((t, i) => <td key={i} className={td}>{fmtNum(t) || '—'}</td>)}
+                    <td className={`${td} bg-gold-50/60 font-semibold`}>{fmtNum(r.computed_total) || '—'}</td>
+                    <td className={td}>{fmtNum(r.final_total) || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
-      {groupId && subjectId && rows.length === 0 && <div className="mt-5"><Notice tone="info">لا يوجد طلاب مسجّلون في هذه الشعبة.</Notice></div>}
-      {groupId && subjectId && rows.length > 0 && (
+
+      {groupId && subjectId && !computed && !scheme && (
+        <div className="mt-5">
+          <Notice tone="info">
+            لا يوجد سلّم علامات لهذه المادة في هذا الصف، لذلك لا يمكن إدخال العلامات.{' '}
+            {group && <Link href={`/dashboard/classes/${group.class_id}/scheme/${subjectId}`} className="font-medium underline">حدّد سلّم العلامات</Link>}
+          </Notice>
+        </div>
+      )}
+      {groupId && subjectId && !computed && scheme && rows.length === 0 && (
+        <div className="mt-5"><Notice tone="info">لا يوجد طلاب مسجّلون في هذه الشعبة.</Notice></div>
+      )}
+      {groupId && subjectId && !computed && scheme && rows.length > 0 && (
         <GradeSheet
           key={`${groupId}${subjectId}${semester}${rows.map((r) => r.semester_total ?? '-').join('')}`}
-          rows={rows} max={max}
+          rows={rows} scheme={scheme}
           action={saveGrades.bind(null, groupId, subjectId, semester)}
         />
       )}

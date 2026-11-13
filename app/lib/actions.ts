@@ -8,7 +8,8 @@ import { AuthError } from 'next-auth';
 import { auth, signIn } from '@/auth';
 import { sql } from './db';
 import { isUuid } from './utils';
-import { fetchScheme } from './data';
+import { fetchParts, fetchScheme } from './data';
+import { SLOTS, activeSlots, defaultLabels, maxOf } from './grading';
 import type { State } from './types';
 
 /* ───────── helpers ───────── */
@@ -58,7 +59,10 @@ export async function authenticate(_: string | undefined, formData: FormData) {
 }
 
 /* ───────── generic delete ───────── */
-async function removeRow(table: 'students' | 'teachers' | 'subjects' | 'classes' | 'class_groups', id: string, path: string) {
+async function removeRow(
+  table: 'students' | 'teachers' | 'subjects' | 'classes' | 'class_groups' | 'transport_routes' | 'class_requests' | 'inventory_items',
+  id: string, path: string,
+) {
   await requireAdmin();
   try {
     await sql`DELETE FROM ${sql(table)} WHERE id = ${id}`;
@@ -73,17 +77,25 @@ export async function deleteTeacher(id: string) { return removeRow('teachers', i
 export async function deleteSubject(id: string) { return removeRow('subjects', id, '/dashboard/subjects'); }
 export async function deleteClass(id: string) { return removeRow('classes', id, '/dashboard/classes'); }
 export async function deleteGroup(id: string) { return removeRow('class_groups', id, '/dashboard/groups'); }
+export async function deleteRoute(id: string) { return removeRow('transport_routes', id, '/dashboard/transport'); }
+export async function deleteRequest(id: string) { return removeRow('class_requests', id, '/dashboard/requests'); }
+export async function deleteInventoryItem(id: string) { return removeRow('inventory_items', id, '/dashboard/inventory'); }
 
 /* ───────── students ───────── */
 const StudentSchema = z.object({
-  student_number: text('رقم الطالب مطلوب'),
+  student_number: optText,
   full_name: text('الاسم مطلوب'),
   gender: z.enum(['male', 'female'], { errorMap: () => ({ message: 'اختر الجنس' }) }),
   date_of_birth: optText,
   guardian_name: optText,
   guardian_phone: optText,
-  status,
+  guardian_phone2: optText,
+  address: optText,
+  registration_status: z.enum(['complete', 'pending'], { errorMap: () => ({ message: 'اختر حالة التسجيل' }) }),
+  missing_documents: optText,
+  status: z.enum(['active', 'inactive', 'graduated', 'transferred'], { errorMap: () => ({ message: 'اختر الحالة' }) }),
   group_id: z.string().optional(),
+  transport_route_id: z.string().optional(),
 });
 
 // Put the student in a group for the current year ('' = remove from any group). Capacity enforced.
@@ -114,8 +126,11 @@ export async function createStudent(_: State, fd: FormData): Promise<State> {
   try {
     await sql.begin(async (tx) => {
       const [s] = await tx`
-        INSERT INTO students (student_number, full_name, gender, date_of_birth, guardian_name, guardian_phone, status)
-        VALUES (${d.student_number}, ${d.full_name}, ${d.gender}, ${d.date_of_birth}, ${d.guardian_name}, ${d.guardian_phone}, ${d.status})
+        INSERT INTO students (student_number, full_name, gender, date_of_birth, guardian_name, guardian_phone, guardian_phone2,
+                              address, registration_status, missing_documents, transport_route_id, status)
+        VALUES (${d.student_number}, ${d.full_name}, ${d.gender}, ${d.date_of_birth}, ${d.guardian_name}, ${d.guardian_phone},
+                ${d.guardian_phone2}, ${d.address}, ${d.registration_status}, ${d.missing_documents},
+                ${d.transport_route_id || null}::uuid, ${d.status})
         RETURNING id`;
       await setEnrollment(tx, s.id, d.group_id);
     });
@@ -137,7 +152,9 @@ export async function updateStudent(id: string, _: State, fd: FormData): Promise
       await tx`
         UPDATE students SET student_number = ${d.student_number}, full_name = ${d.full_name}, gender = ${d.gender},
           date_of_birth = ${d.date_of_birth}, guardian_name = ${d.guardian_name},
-          guardian_phone = ${d.guardian_phone}, status = ${d.status}
+          guardian_phone = ${d.guardian_phone}, guardian_phone2 = ${d.guardian_phone2}, address = ${d.address},
+          registration_status = ${d.registration_status}, missing_documents = ${d.missing_documents},
+          transport_route_id = ${d.transport_route_id || null}::uuid, status = ${d.status}
         WHERE id = ${id}`;
       await setEnrollment(tx, id, d.group_id);
     });
@@ -155,7 +172,7 @@ export async function updateStudent(id: string, _: State, fd: FormData): Promise
 /* ───────── teachers ───────── */
 const TeacherSchema = z.object({
   full_name: text('الاسم مطلوب'),
-  email: z.string({ required_error: 'البريد الإلكتروني مطلوب' }).trim().email('بريد إلكتروني غير صالح'),
+  email: z.string().trim().email('بريد إلكتروني غير صالح').optional().or(z.literal('')).transform((v) => v || null),
   phone: optText,
   hire_date: optText,
   status: z.enum(['active', 'inactive'], { errorMap: () => ({ message: 'اختر الحالة' }) }),
@@ -298,7 +315,7 @@ export async function removeCurriculum(classId: string, subjectId: string) {
     await sql`DELETE FROM curriculum WHERE class_id = ${classId} AND subject_id = ${subjectId}
               AND academic_year_id = (SELECT id FROM academic_years WHERE is_current)`;
   } catch (e) {
-    back(path, dbMessage(e, 'تعذّر الحذف.', 'لا يمكن حذف المادة من الخطة لوجود معلم مسند إليها أو علامات مسجّلة.'));
+    back(path, dbMessage(e, 'تعذّر الحذف.', 'لا يمكن حذف المادة من الخطة لوجود معلم مسند إليها أو علامات مسجّلة أو لأنها جزء من مادة محسوبة.'));
   }
   revalidatePath(path);
   back(path);
@@ -408,13 +425,13 @@ export async function saveAttendance(groupId: string, date: string, _: State, fd
         await tx`DELETE FROM attendance WHERE date = ${date}::date
           AND enrollment_id IN (SELECT e.id FROM enrollments e
             WHERE e.class_group_id = ${groupId}::uuid
-              AND e.id IN (SELECT jsonb_array_elements_text(${tx.json(remove)}::jsonb)::uuid))`;
+              AND e.id IN (SELECT jsonb_array_elements_text(${tx.json(remove)})::uuid))`;
       }
       if (upsert.length) {
         await tx`
           INSERT INTO attendance (enrollment_id, date, status, note, recorded_by)
           SELECT e.id, ${date}::date, r.status, r.note, ${userId}::uuid
-          FROM jsonb_to_recordset(${tx.json(upsert)}::jsonb) AS r(enrollment_id text, status text, note text)
+          FROM jsonb_to_recordset(${tx.json(upsert)}) AS r(enrollment_id text, status text, note text)
           JOIN enrollments e ON e.id = r.enrollment_id::uuid AND e.class_group_id = ${groupId}::uuid
           ON CONFLICT (enrollment_id, date)
           DO UPDATE SET status = EXCLUDED.status, note = EXCLUDED.note, recorded_by = EXCLUDED.recorded_by`;
@@ -428,31 +445,33 @@ export async function saveAttendance(groupId: string, date: string, _: State, fd
 }
 
 /* ───────── grades ───────── */
-const FIELDS = ['oral', 'homework', 'quiz', 'exam'] as const;
-
-// A row with all four fields empty is deleted; otherwise created/updated. Values are checked against the scheme.
+// Components come from the subject's grading scheme. A row with every used field empty is deleted;
+// otherwise it is created/updated (partial rows are allowed; totals appear once complete).
 export async function saveGrades(groupId: string, subjectId: string, semester: number, _: State, fd: FormData): Promise<State> {
   await requireAdmin();
   if (![1, 2].includes(semester)) return { message: 'فصل دراسي غير صالح.' };
+  if ((await fetchParts(groupId, subjectId)).length > 0)
+    return { message: 'هذه المادة محسوبة تلقائياً من موادّها ولا تُدخل علاماتها مباشرة.' };
   const scheme = await fetchScheme(groupId, subjectId);
-  const max: Record<string, number> = scheme
-    ? { oral: scheme.oral_max, homework: scheme.homework_max, quiz: scheme.quiz_max, exam: scheme.exam_max }
-    : { oral: 1000, homework: 1000, quiz: 1000, exam: 1000 };
+  if (!scheme) return { message: 'لا يوجد سلّم علامات لهذه المادة في هذا الصف.' };
+  const active = activeSlots(scheme);
 
-  const ids = [...fd.keys()].filter((k) => k.startsWith('oral_')).map((k) => k.slice(5)).filter(isUuid);
+  const first = `${active[0]}_`;
+  const ids = [...fd.keys()].filter((k) => k.startsWith(first)).map((k) => k.slice(first.length)).filter(isUuid);
   const errors: Record<string, string[]> = {};
   const rows: Record<string, string | number | null>[] = [];
   const remove: string[] = [];
 
   for (const id of ids) {
-    const raw = FIELDS.map((f) => String(fd.get(`${f}_${id}`) ?? '').trim().replace(',', '.'));
+    const raw = active.map((f) => String(fd.get(`${f}_${id}`) ?? '').trim().replace(',', '.'));
     if (raw.every((x) => x === '')) { remove.push(id); continue; }
     const row: Record<string, string | number | null> = { enrollment_id: id };
-    FIELDS.forEach((f, i) => {
-      if (raw[i] === '') { row[f] = null; return; }
+    SLOTS.forEach((f) => { row[f] = null; });
+    active.forEach((f, i) => {
+      if (raw[i] === '') return;
       const n = Number(raw[i]);
       if (!Number.isFinite(n) || n < 0) errors[`${f}_${id}`] = ['قيمة غير صالحة'];
-      else if (n > max[f]) errors[`${f}_${id}`] = [`الحد الأعظمي ${max[f]}`];
+      else if (n > maxOf(scheme, f)) errors[`${f}_${id}`] = [`الحد الأعظمي ${maxOf(scheme, f)}`];
       else row[f] = n;
     });
     rows.push(row);
@@ -469,13 +488,17 @@ export async function saveGrades(groupId: string, subjectId: string, semester: n
       }
       if (rows.length) {
         await tx`
-          INSERT INTO grades (enrollment_id, academic_year_id, class_id, subject_id, semester, oral, homework, quiz, exam)
-          SELECT e.id, e.academic_year_id, e.class_id, ${subjectId}::uuid, ${semester}::smallint, r.oral, r.homework, r.quiz, r.exam
-          FROM jsonb_to_recordset(${tx.json(rows)}::jsonb)
-            AS r(enrollment_id text, oral numeric, homework numeric, quiz numeric, exam numeric)
+          INSERT INTO grades (enrollment_id, academic_year_id, class_id, subject_id, semester,
+                              oral, homework, activity, quiz, quiz2, exam, exam2)
+          SELECT e.id, e.academic_year_id, e.class_id, ${subjectId}::uuid, ${semester}::smallint,
+                 r.oral, r.homework, r.activity, r.quiz, r.quiz2, r.exam, r.exam2
+          FROM jsonb_to_recordset(${tx.json(rows)})
+            AS r(enrollment_id text, oral numeric, homework numeric, activity numeric, quiz numeric,
+                 quiz2 numeric, exam numeric, exam2 numeric)
           JOIN enrollments e ON e.id = r.enrollment_id::uuid AND e.class_group_id = ${groupId}::uuid
           ON CONFLICT (enrollment_id, subject_id, semester)
-          DO UPDATE SET oral = EXCLUDED.oral, homework = EXCLUDED.homework, quiz = EXCLUDED.quiz, exam = EXCLUDED.exam`;
+          DO UPDATE SET oral = EXCLUDED.oral, homework = EXCLUDED.homework, activity = EXCLUDED.activity,
+                        quiz = EXCLUDED.quiz, quiz2 = EXCLUDED.quiz2, exam = EXCLUDED.exam, exam2 = EXCLUDED.exam2`;
       }
     });
   } catch (e) {
@@ -483,4 +506,250 @@ export async function saveGrades(groupId: string, subjectId: string, semester: n
   }
   revalidatePath('/dashboard/grades');
   return { ok: true, message: 'تم حفظ العلامات.' };
+}
+
+/* ───────── grading schemes (per class + subject) ───────── */
+const maxField = z.coerce.number({ invalid_type_error: 'رقم غير صالح' }).int('رقم صحيح').min(0, 'لا يقل عن 0').max(1000);
+const SchemeSchema = z
+  .object({
+    oral_max: maxField, homework_max: maxField, activity_max: maxField, quiz_max: maxField,
+    quiz2_max: maxField, exam_max: maxField, exam2_max: maxField,
+    pass_mark: z.string().optional().transform((v) => (v ? Number(v) : null)),
+    label_oral: optText, label_homework: optText, label_activity: optText, label_quiz: optText,
+    label_quiz2: optText, label_exam: optText, label_exam2: optText,
+  })
+  .superRefine((d, ctx) => {
+    const works = d.oral_max + d.homework_max + d.activity_max + d.quiz_max + d.quiz2_max;
+    const exam = d.exam_max + d.exam2_max;
+    if (works <= 0) ctx.addIssue({ code: 'custom', path: ['oral_max'], message: 'أدخل درجات مكوّنات الأعمال.' });
+    else if (works !== exam)
+      ctx.addIssue({ code: 'custom', path: ['exam_max'], message: `مجموع درجات الأعمال (${works}) يجب أن يساوي مجموع درجات الامتحان (${exam}).` });
+    if (d.pass_mark !== null && (!Number.isFinite(d.pass_mark) || d.pass_mark < 0 || d.pass_mark > works))
+      ctx.addIssue({ code: 'custom', path: ['pass_mark'], message: 'الدرجة الصغرى بين 0 والدرجة العظمى.' });
+  });
+
+export async function saveScheme(classId: string, subjectId: string, _: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const p = SchemeSchema.safeParse(Object.fromEntries(fd));
+  if (!p.success) return fail(p.error, fd);
+  const d = p.data;
+  const labels: Record<string, string> = {};
+  for (const k of SLOTS) {
+    const v = d[`label_${k}` as const];
+    if (v && v !== defaultLabels[k]) labels[k] = v;
+  }
+  const total = d.oral_max + d.homework_max + d.activity_max + d.quiz_max + d.quiz2_max;
+  try {
+    await sql`
+      INSERT INTO grading_schemes (class_id, subject_id, oral_max, homework_max, activity_max, quiz_max, quiz2_max,
+                                   exam_max, exam2_max, total_max, pass_mark, is_provisional, labels)
+      VALUES (${classId}, ${subjectId}, ${d.oral_max}, ${d.homework_max}, ${d.activity_max}, ${d.quiz_max}, ${d.quiz2_max},
+              ${d.exam_max}, ${d.exam2_max}, ${total}, ${d.pass_mark}, FALSE, ${sql.json(labels)})
+      ON CONFLICT (class_id, subject_id) DO UPDATE SET
+        oral_max = EXCLUDED.oral_max, homework_max = EXCLUDED.homework_max, activity_max = EXCLUDED.activity_max,
+        quiz_max = EXCLUDED.quiz_max, quiz2_max = EXCLUDED.quiz2_max, exam_max = EXCLUDED.exam_max,
+        exam2_max = EXCLUDED.exam2_max, total_max = EXCLUDED.total_max, pass_mark = EXCLUDED.pass_mark,
+        is_provisional = FALSE, labels = EXCLUDED.labels`;
+  } catch (e) {
+    return { message: dbMessage(e, 'تعذّر حفظ سلّم العلامات.'), values: values(fd) };
+  }
+  revalidatePath(`/dashboard/classes/${classId}`);
+  revalidatePath('/dashboard/grades');
+  back(`/dashboard/classes/${classId}`);
+  return {};
+}
+
+/* ───────── transport ───────── */
+const RouteSchema = z.object({ name: text('اسم الخط مطلوب'), driver_name: text('اسم السائق مطلوب'), driver_phone: optText });
+
+export async function createRoute(_: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const p = RouteSchema.safeParse(Object.fromEntries(fd));
+  if (!p.success) return fail(p.error, fd);
+  try {
+    await sql`INSERT INTO transport_routes (name, driver_name, driver_phone) VALUES (${p.data.name}, ${p.data.driver_name}, ${p.data.driver_phone})`;
+  } catch (e) {
+    return { message: dbMessage(e, 'تعذّرت إضافة الخط.'), values: values(fd) };
+  }
+  revalidatePath('/dashboard/transport');
+  back('/dashboard/transport');
+  return {};
+}
+
+export async function updateRoute(id: string, _: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const p = RouteSchema.safeParse(Object.fromEntries(fd));
+  if (!p.success) return fail(p.error, fd);
+  try {
+    await sql`UPDATE transport_routes SET name = ${p.data.name}, driver_name = ${p.data.driver_name}, driver_phone = ${p.data.driver_phone} WHERE id = ${id}`;
+  } catch (e) {
+    return { message: dbMessage(e, 'تعذّر تعديل الخط.'), values: values(fd) };
+  }
+  revalidatePath('/dashboard/transport');
+  back('/dashboard/transport');
+  return {};
+}
+
+export async function addPassenger(routeId: string, fd: FormData) {
+  await requireAdmin();
+  const path = `/dashboard/transport/${routeId}`;
+  const studentId = String(fd.get('student_id') ?? '');
+  if (!isUuid(studentId)) back(path, 'اختر طالباً.');
+  await sql`UPDATE students SET transport_route_id = ${routeId} WHERE id = ${studentId}`;
+  revalidatePath(path);
+  back(path);
+}
+
+export async function removePassenger(routeId: string, studentId: string) {
+  await requireAdmin();
+  const path = `/dashboard/transport/${routeId}`;
+  await sql`UPDATE students SET transport_route_id = NULL WHERE id = ${studentId} AND transport_route_id = ${routeId}`;
+  revalidatePath(path);
+  back(path);
+}
+
+/* ───────── class-opening requests ───────── */
+const RequestSchema = z.object({
+  class_id: z.string({ required_error: 'اختر الصف' }).uuid('اختر الصف'),
+  full_name: text('الاسم مطلوب'),
+  phone: optText,
+  status: z.enum(['pending', 'enrolled', 'dropped'], { errorMap: () => ({ message: 'اختر الحالة' }) }),
+  note: optText,
+});
+
+export async function createRequest(_: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const p = RequestSchema.safeParse(Object.fromEntries(fd));
+  if (!p.success) return fail(p.error, fd);
+  const d = p.data;
+  try {
+    await sql`INSERT INTO class_requests (class_id, full_name, phone, status, note) VALUES (${d.class_id}, ${d.full_name}, ${d.phone}, ${d.status}, ${d.note})`;
+  } catch (e) {
+    return { message: dbMessage(e, 'تعذّرت إضافة الطلب.'), values: values(fd) };
+  }
+  revalidatePath('/dashboard/requests');
+  back('/dashboard/requests');
+  return {};
+}
+
+export async function updateRequest(id: string, _: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const p = RequestSchema.safeParse(Object.fromEntries(fd));
+  if (!p.success) return fail(p.error, fd);
+  const d = p.data;
+  try {
+    await sql`UPDATE class_requests SET class_id = ${d.class_id}, full_name = ${d.full_name}, phone = ${d.phone}, status = ${d.status}, note = ${d.note} WHERE id = ${id}`;
+  } catch (e) {
+    return { message: dbMessage(e, 'تعذّر تعديل الطلب.'), values: values(fd) };
+  }
+  revalidatePath('/dashboard/requests');
+  back('/dashboard/requests');
+  return {};
+}
+
+/* ───────── inventory ───────── */
+const InventorySchema = z.object({
+  name: text('اسم المادة مطلوب'),
+  unit: optText,
+  quantity: optInt.refine((v) => v === null || (Number.isInteger(v) && v >= 0), 'الكمية رقم غير سالب'),
+  condition: z.enum(['', 'new', 'old']).optional().transform((v) => v || null),
+  note: optText,
+});
+
+export async function createInventoryItem(_: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const p = InventorySchema.safeParse(Object.fromEntries(fd));
+  if (!p.success) return fail(p.error, fd);
+  const d = p.data;
+  try {
+    await sql`INSERT INTO inventory_items (name, unit, quantity, condition, note) VALUES (${d.name}, ${d.unit}, ${d.quantity}, ${d.condition}, ${d.note})`;
+  } catch (e) {
+    return { message: dbMessage(e, 'تعذّرت الإضافة.'), values: values(fd) };
+  }
+  revalidatePath('/dashboard/inventory');
+  back('/dashboard/inventory');
+  return {};
+}
+
+export async function updateInventoryItem(id: string, _: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const p = InventorySchema.safeParse(Object.fromEntries(fd));
+  if (!p.success) return fail(p.error, fd);
+  const d = p.data;
+  try {
+    await sql`UPDATE inventory_items SET name = ${d.name}, unit = ${d.unit}, quantity = ${d.quantity}, condition = ${d.condition}, note = ${d.note} WHERE id = ${id}`;
+  } catch (e) {
+    return { message: dbMessage(e, 'تعذّر التعديل.'), values: values(fd) };
+  }
+  revalidatePath('/dashboard/inventory');
+  back('/dashboard/inventory');
+  return {};
+}
+
+/* ───────── weekly timetable ───────── */
+// Fields slot_<day>_<period> = subject id ('' = free). The teacher comes from the group's assignment.
+export async function saveTimetable(groupId: string, _: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const slots: { day: number; period: number; subject_id: string }[] = [];
+  for (const [k, v] of fd.entries()) {
+    const m = /^slot_(\d)_(\d+)$/.exec(k);
+    const sid = String(v);
+    if (m && sid && isUuid(sid)) slots.push({ day: Number(m[1]), period: Number(m[2]), subject_id: sid });
+  }
+  const assigned = await sql<{ subject_id: string }[]>`SELECT subject_id FROM teaching_assignments WHERE class_group_id = ${groupId}`;
+  const ok = new Set(assigned.map((a) => a.subject_id));
+  if (slots.some((s) => !ok.has(s.subject_id))) return { message: 'عيّن معلماً لكل مادة في صفحة الشعبة قبل وضعها في الجدول.' };
+  try {
+    await sql.begin(async (tx) => {
+      await tx`DELETE FROM timetable_entries WHERE class_group_id = ${groupId}`;
+      if (slots.length) {
+        await tx`
+          INSERT INTO timetable_entries (class_group_id, academic_year_id, day_of_week, period_no, subject_id, teacher_id)
+          SELECT g.id, g.academic_year_id, r.day, r.period, ta.subject_id, ta.teacher_id
+          FROM jsonb_to_recordset(${tx.json(slots)}) AS r(day int, period int, subject_id text)
+          JOIN class_groups g ON g.id = ${groupId}::uuid
+          JOIN teaching_assignments ta ON ta.class_group_id = g.id AND ta.subject_id = r.subject_id::uuid`;
+      }
+    });
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    return { message: code === '23505' ? 'المعلم مشغول في هذه الحصة مع شعبة أخرى.' : dbMessage(e, 'تعذّر حفظ الجدول.'), values: values(fd) };
+  }
+  revalidatePath('/dashboard/timetable');
+  return { ok: true, message: 'تم حفظ الجدول.' };
+}
+
+/* ───────── textbook handouts ───────── */
+// Fields book_<studentId>_<textbookId> = 'on' when delivered
+export async function saveHandouts(groupId: string, _: State, fd: FormData): Promise<State> {
+  await requireAdmin();
+  const pairs: { student_id: string; textbook_id: string }[] = [];
+  for (const k of fd.keys()) {
+    const m = /^book_([0-9a-f-]{36})_([0-9a-f-]{36})$/i.exec(k);
+    if (m) pairs.push({ student_id: m[1], textbook_id: m[2] });
+  }
+  try {
+    await sql.begin(async (tx) => {
+      await tx`
+        DELETE FROM textbook_handouts h
+        USING enrollments e, textbooks b
+        WHERE e.class_group_id = ${groupId}::uuid AND h.student_id = e.student_id AND h.academic_year_id = e.academic_year_id
+          AND b.id = h.textbook_id AND b.class_id = e.class_id
+          AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(${tx.json(pairs)}) AS r(student_id text, textbook_id text)
+                          WHERE r.student_id::uuid = h.student_id AND r.textbook_id::uuid = h.textbook_id)`;
+      if (pairs.length) {
+        await tx`
+          INSERT INTO textbook_handouts (student_id, textbook_id, academic_year_id)
+          SELECT e.student_id, b.id, e.academic_year_id
+          FROM jsonb_to_recordset(${tx.json(pairs)}) AS r(student_id text, textbook_id text)
+          JOIN enrollments e ON e.student_id = r.student_id::uuid AND e.class_group_id = ${groupId}::uuid
+          JOIN textbooks b ON b.id = r.textbook_id::uuid AND b.class_id = e.class_id
+          ON CONFLICT DO NOTHING`;
+      }
+    });
+  } catch (e) {
+    return { message: dbMessage(e, 'تعذّر حفظ تسليم الكتب.') };
+  }
+  revalidatePath('/dashboard/books');
+  return { ok: true, message: 'تم حفظ تسليم الكتب.' };
 }

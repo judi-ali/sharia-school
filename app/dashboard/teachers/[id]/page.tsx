@@ -8,7 +8,7 @@ import { PageHeader } from '@/app/ui/kit';
 import { FormShell, Input, Select } from '@/app/ui/form';
 
 export const metadata: Metadata = { title: 'بيانات المعلم' };
-const { graduated: _g, ...teacherStatus } = personStatusLabel;
+const { graduated: _g, transferred: _t, ...teacherStatus } = personStatusLabel;
 
 export default async function Page(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
@@ -22,7 +22,7 @@ export default async function Page(props: { params: Promise<{ id: string }> }) {
       <PageHeader title={isNew ? 'إضافة معلم' : 'تعديل بيانات المعلم'} />
       <FormShell action={isNew ? createTeacher : updateTeacher.bind(null, id)} cancelHref="/dashboard/teachers">
         <Input name="full_name" label="الاسم الكامل" defaultValue={t?.full_name} required />
-        <Input name="email" label="البريد الإلكتروني" type="email" defaultValue={t?.email} ltr required />
+        <Input name="email" label="البريد الإلكتروني (اختياري)" type="email" defaultValue={t?.email} ltr />
         <Input name="phone" label="الهاتف" defaultValue={t?.phone} ltr />
         <Input name="hire_date" label="تاريخ التعيين" type="date" defaultValue={t?.hire_date} />
         <Select name="status" label="الحالة" options={toOptions(teacherStatus)} defaultValue={t?.status ?? 'active'} />

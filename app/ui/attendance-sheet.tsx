@@ -5,7 +5,7 @@ import { attendanceLabel, toOptions } from '@/app/lib/labels';
 import { FormShell } from '@/app/ui/form';
 import { btnSecondary, fieldClass, tableWrap, td, th } from '@/app/ui/styles';
 
-type Row = { enrollment_id: string; full_name: string; student_number: string; status: string | null; note: string | null };
+type Row = { enrollment_id: string; full_name: string; student_number: string | null; status: string | null; note: string | null };
 
 export default function AttendanceSheet({
   rows, action,
@@ -26,7 +26,7 @@ export default function AttendanceSheet({
           <tbody className="divide-y divide-ink-100">
             {rows.map((r) => (
               <tr key={r.enrollment_id}>
-                <td className={td}>{r.full_name}<span className="ms-2 text-xs text-ink-600" dir="ltr">{r.student_number}</span></td>
+                <td className={td}>{r.full_name}{r.student_number && <span className="ms-2 text-xs text-ink-600" dir="ltr">{r.student_number}</span>}</td>
                 <td className={td}>
                   <select name={`status_${r.enrollment_id}`} defaultValue={r.status ?? ''} aria-label={`حالة ${r.full_name}`} className={`${fieldClass} min-w-32`}>
                     <option value="">غير مسجّل</option>

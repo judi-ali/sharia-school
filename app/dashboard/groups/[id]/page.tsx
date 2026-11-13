@@ -59,7 +59,7 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
               {students.map((s) => (
                 <tr key={s.enrollment_id}>
                   <td className={td}>{s.full_name}</td>
-                  <td className={td} dir="ltr">{s.student_number}</td>
+                  <td className={td} dir="ltr">{s.student_number ?? '—'}</td>
                   <td className={td}>
                     <div className="flex justify-end">
                       <DeleteButton action={unenrollStudent.bind(null, id, s.enrollment_id)} label="إزالة"
@@ -76,7 +76,7 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
             <label htmlFor="student_id" className="mb-1.5 block text-sm font-medium">إضافة طالب غير مسجّل في أي شعبة</label>
             <select id="student_id" name="student_id" required defaultValue="" className={fieldClass} disabled={unassigned.length === 0}>
               <option value="" disabled>{unassigned.length ? 'اختر الطالب' : 'كل الطلاب النشطين موزّعون على شعب'}</option>
-              {unassigned.map((s) => <option key={s.id} value={s.id}>{s.full_name} ({s.student_number})</option>)}
+              {unassigned.map((s) => <option key={s.id} value={s.id}>{s.full_name}</option>)}
             </select>
           </div>
           <button className={btnPrimary} disabled={unassigned.length === 0}>إضافة إلى الشعبة</button>
@@ -91,21 +91,27 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
             </thead>
             <tbody className="divide-y divide-ink-100">
               {assignments.length === 0 && <EmptyRow cols={3}>لا توجد مواد في خطة هذا الصف. أضِفها من صفحة الصف.</EmptyRow>}
-              {assignments.map((a) => (
-                <tr key={a.subject_id}>
-                  <td className={td}>{a.name}</td>
-                  <td className={td}>{a.weekly_periods}</td>
-                  <td className={td}>
-                    <form action={assignTeacher.bind(null, id, a.subject_id)} className="flex items-center gap-2">
-                      <select name="teacher_id" defaultValue={a.teacher_id ?? ''} aria-label={`معلم ${a.name}`} className={`${fieldClass} min-w-44`}>
-                        <option value="">— غير محدّد —</option>
-                        {teachers.map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
-                      </select>
-                      <button className={btnSecondary}>حفظ</button>
-                    </form>
-                  </td>
-                </tr>
-              ))}
+              {assignments.map((a) => {
+                const parts = assignments.filter((x) => x.part_of_subject_id === a.subject_id);
+                return (
+                  <tr key={a.subject_id}>
+                    <td className={td}>{a.part_of_subject_id && <span className="me-2 text-ink-600">↳</span>}{a.name}</td>
+                    <td className={td}>{a.part_of_subject_id ? '—' : a.weekly_periods}</td>
+                    <td className={td}>
+                      <form action={assignTeacher.bind(null, id, a.subject_id)} className="flex items-center gap-2">
+                        <select name="teacher_id" defaultValue={a.teacher_id ?? ''} aria-label={`معلم ${a.name}`} className={`${fieldClass} min-w-44`}>
+                          <option value="">— غير محدّد —</option>
+                          {teachers.map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                        </select>
+                        <button className={btnSecondary}>حفظ</button>
+                      </form>
+                      {a.is_parent && (
+                        <span className="mt-1 block text-xs text-ink-600">علاماتها محسوبة تلقائياً من: {parts.map((x) => x.name).join(' و')}</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -31,7 +31,7 @@ export default async function Page(props: { searchParams?: Promise<{ query?: str
               if (!list.length) return null;
               return [
                 <tr key={cat} className="bg-gold-50">
-                  <td colSpan={2} className="px-4 py-2 text-right text-xs font-semibold text-gold-600">{categoryLabel[cat]} ({list.length})</td>
+                  <td colSpan={2} className="px-4 py-2 text-xs font-semibold text-gold-600">{categoryLabel[cat]} ({list.length})</td>
                 </tr>,
                 ...list.map((s) => (
                   <tr key={s.id}>

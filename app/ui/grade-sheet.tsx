@@ -2,18 +2,19 @@
 
 import clsx from 'clsx';
 import type { State } from '@/app/lib/types';
+import { activeSlots, maxOf, slotLabel, type Scheme } from '@/app/lib/grading';
 import { fmtNum } from '@/app/lib/utils';
 import { FormShell, useFormState } from '@/app/ui/form';
 import { fieldClass, tableWrap, td, th } from '@/app/ui/styles';
 
 type Row = {
-  enrollment_id: string; full_name: string; student_number: string;
-  oral: string | null; homework: string | null; quiz: string | null; exam: string | null;
+  enrollment_id: string; full_name: string; student_number: string | null;
+  oral: string | null; homework: string | null; activity: string | null; quiz: string | null;
+  quiz2: string | null; exam: string | null; exam2: string | null;
   coursework_total: string | null; semester_total: string | null; final_total: string | null;
 };
-type Max = { oral: number; homework: number; quiz: number; exam: number; total: number } | null;
 
-function Cell({ name, defaultValue, max }: { name: string; defaultValue: string | null; max?: number }) {
+function Cell({ name, defaultValue, max }: { name: string; defaultValue: string | null; max: number }) {
   const s = useFormState();
   const err = s.errors?.[name]?.[0];
   return (
@@ -26,13 +27,11 @@ function Cell({ name, defaultValue, max }: { name: string; defaultValue: string 
   );
 }
 
+// Columns follow the subject's grading scheme (components with max 0 are hidden)
 export default function GradeSheet({
-  rows, max, action,
-}: { rows: Row[]; max: Max; action: (s: State, fd: FormData) => Promise<State> }) {
-  const cols = [
-    { key: 'oral', label: 'الشفهي' }, { key: 'homework', label: 'الوظائف' },
-    { key: 'quiz', label: 'المذاكرة' }, { key: 'exam', label: 'الامتحان' },
-  ] as const;
+  rows, scheme, action,
+}: { rows: Row[]; scheme: Scheme; action: (s: State, fd: FormData) => Promise<State> }) {
+  const slots = activeSlots(scheme);
   return (
     <FormShell action={action} submitLabel="حفظ العلامات" bare className="mt-5">
       <div className={tableWrap}>
@@ -40,11 +39,13 @@ export default function GradeSheet({
           <thead className="border-b border-ink-100 bg-ink-50">
             <tr>
               <th className={th}>الطالب</th>
-              {cols.map((c) => (
-                <th key={c.key} className={th}>{c.label}{max && <span className="ms-1 font-normal text-ink-600">({max[c.key]})</span>}</th>
+              {slots.map((k) => (
+                <th key={k} className={th}>
+                  {slotLabel(scheme, k)}<span className="ms-1 font-normal text-ink-600">({maxOf(scheme, k)})</span>
+                </th>
               ))}
               <th className={th}>مجموع الأعمال</th>
-              <th className={th}>محصلة الفصل{max && <span className="ms-1 font-normal text-ink-600">({max.total})</span>}</th>
+              <th className={th}>محصلة الفصل <span className="font-normal text-ink-600">({scheme.total_max})</span></th>
               <th className={th}>المحصلة النهائية</th>
             </tr>
           </thead>
@@ -52,9 +53,9 @@ export default function GradeSheet({
             {rows.map((r) => (
               <tr key={r.enrollment_id}>
                 <td className={td}>{r.full_name}</td>
-                {cols.map((c) => (
-                  <td key={c.key} className={td}>
-                    <Cell name={`${c.key}_${r.enrollment_id}`} defaultValue={r[c.key]} max={max?.[c.key]} />
+                {slots.map((k) => (
+                  <td key={k} className={td}>
+                    <Cell name={`${k}_${r.enrollment_id}`} defaultValue={r[k]} max={maxOf(scheme, k)} />
                   </td>
                 ))}
                 <td className={td}>{fmtNum(r.coursework_total) || '—'}</td>

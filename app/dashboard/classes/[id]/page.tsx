@@ -4,7 +4,8 @@ import { fetchClass, fetchCurriculum, fetchSubjectOptions, getCurrentYear } from
 import { createClass, updateClass, removeCurriculum, saveCurriculum } from '@/app/lib/actions';
 import { categoryLabel, gradeLevelLabel, toOptions, trackLabel } from '@/app/lib/labels';
 import { isUuid } from '@/app/lib/utils';
-import { Notice, PageHeader, Section } from '@/app/ui/kit';
+import Link from 'next/link';
+import { Badge, Notice, PageHeader, Section } from '@/app/ui/kit';
 import { DeleteButton, FormShell, Input, Select } from '@/app/ui/form';
 import { btnPrimary, btnSecondary, fieldClass, tableWrap, td, th } from '@/app/ui/styles';
 
@@ -75,31 +76,50 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
         <div className={tableWrap}>
           <table className="min-w-full text-sm">
             <thead className="border-b border-ink-100 bg-ink-50">
-              <tr><th className={th}>المادة</th><th className={th}>التصنيف</th><th className={th}>الحصص في الأسبوع</th><th className={th}><span className="sr-only">إجراءات</span></th></tr>
+              <tr><th className={th}>المادة</th><th className={th}>التصنيف</th><th className={th}>الحصص في الأسبوع</th><th className={th}>سلّم العلامات</th><th className={th}><span className="sr-only">إجراءات</span></th></tr>
             </thead>
             <tbody className="divide-y divide-ink-100">
               {curriculum.length === 0 && (
-                <tr><td colSpan={4} className="px-4 py-8 text-right text-ink-700">لا توجد مواد في خطة هذا الصف بعد. أضِف المادة الأولى من الأسفل.</td></tr>
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-ink-700">لا توجد مواد في خطة هذا الصف بعد. أضِف المادة الأولى من الأسفل.</td></tr>
               )}
-              {curriculum.map((c) => (
-                <tr key={c.subject_id}>
-                  <td className={td}>{c.name}</td>
-                  <td className={td}>{categoryLabel[c.category]}</td>
-                  <td className={td}>
-                    <form action={saveCurriculum.bind(null, id)} className="flex items-center gap-2">
-                      <input type="hidden" name="subject_id" value={c.subject_id} />
-                      <input type="number" name="weekly_periods" defaultValue={c.weekly_periods} min={1} max={35}
-                        aria-label={`حصص ${c.name}`} className={`${fieldClass} !w-20`} />
-                      <button className={btnSecondary}>حفظ</button>
-                    </form>
-                  </td>
-                  <td className={td}>
-                    <div className="flex justify-end">
-                      <DeleteButton action={removeCurriculum.bind(null, id, c.subject_id)} confirm={`إزالة «${c.name}» من خطة ${cls.name}؟`} label="إزالة" />
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {curriculum.map((c) => {
+                const isPart = !!c.part_of_subject_id;
+                return (
+                  <tr key={c.subject_id} className={isPart ? 'bg-ink-50/60' : undefined}>
+                    <td className={td}>{isPart && <span className="me-2 text-ink-600">↳</span>}{c.name}</td>
+                    <td className={td}>{categoryLabel[c.category]}</td>
+                    <td className={td}>
+                      {isPart ? (
+                        <span className="text-sm text-ink-700">ضمن «{c.part_of_name}»</span>
+                      ) : (
+                        <form action={saveCurriculum.bind(null, id)} className="flex items-center gap-2">
+                          <input type="hidden" name="subject_id" value={c.subject_id} />
+                          <input type="number" name="weekly_periods" defaultValue={c.weekly_periods} min={1} max={35}
+                            aria-label={`حصص ${c.name}`} className={`${fieldClass} !w-20`} />
+                          <button className={btnSecondary}>حفظ</button>
+                        </form>
+                      )}
+                    </td>
+                    <td className={td}>
+                      {c.is_parent ? (
+                        <Badge>محسوبة تلقائياً</Badge>
+                      ) : (
+                        <Link href={`/dashboard/classes/${id}/scheme/${c.subject_id}`} className="inline-flex items-center gap-2 hover:underline">
+                          {c.scheme_total ? <Badge tone={c.scheme_provisional ? 'warn' : 'good'}>{c.scheme_provisional ? 'مؤقت · ' : ''}من {c.scheme_total}</Badge> : <Badge tone="warn">غير محدّد</Badge>}
+                          <span className="text-sm">{c.scheme_total ? 'تعديل' : 'تحديد'}</span>
+                        </Link>
+                      )}
+                    </td>
+                    <td className={td}>
+                      {!isPart && !c.is_parent && (
+                        <div className="flex justify-end">
+                          <DeleteButton action={removeCurriculum.bind(null, id, c.subject_id)} confirm={`إزالة «${c.name}» من خطة ${cls.name}؟`} label="إزالة" />
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -33,7 +33,7 @@ export default async function Page(props: { searchParams?: Promise<{ query?: str
             {rows.map((t) => (
               <tr key={t.id}>
                 <td className={td}><Link href={`/dashboard/teachers/${t.id}`} className="font-medium hover:underline">{t.full_name}</Link></td>
-                <td className={td} dir="ltr">{t.email}</td>
+                <td className={td} dir="ltr">{t.email ?? '—'}</td>
                 <td className={td} dir="ltr">{t.phone}</td>
                 <td className={td}>{t.subjects}</td>
                 <td className={td}><Badge tone={t.status === 'active' ? 'good' : 'neutral'}>{personStatusLabel[t.status]}</Badge></td>

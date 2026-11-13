@@ -48,7 +48,7 @@ export function Section({ title, hint, children }: { title: string; hint?: strin
 }
 
 export function EmptyRow({ cols, children }: { cols: number; children: React.ReactNode }) {
-  return <tr><td colSpan={cols} className="px-4 py-10 text-right text-sm text-ink-700">{children}</td></tr>;
+  return <tr><td colSpan={cols} className="px-4 py-10 text-center text-sm text-ink-700">{children}</td></tr>;
 }
 
 export function RowActions({ editHref, onDelete, confirm }: { editHref: string; onDelete: () => Promise<void>; confirm: string }) {

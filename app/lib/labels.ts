@@ -1,5 +1,9 @@
 export const genderLabel: Record<string, string> = { male: 'ذكر', female: 'أنثى' };
-export const personStatusLabel: Record<string, string> = { active: 'نشط', inactive: 'غير نشط', graduated: 'متخرّج' };
+export const personStatusLabel: Record<string, string> = { active: 'نشط', inactive: 'غير نشط', graduated: 'متخرّج', transferred: 'منقول' };
+export const registrationLabel: Record<string, string> = { complete: 'مكتمل', pending: 'أوراق ناقصة' };
+export const conditionLabel: Record<string, string> = { new: 'جديد', old: 'قديم' };
+export const requestStatusLabel: Record<string, string> = { pending: 'قيد الانتظار', enrolled: 'سُجّل', dropped: 'منقطع' };
+export const dayLabel = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'];
 export const trackLabel: Record<string, string> = { general: 'عام', literary: 'أدبي', scientific: 'علمي' };
 export const stageLabel: Record<string, string> = { preparatory: 'إعدادية', secondary: 'ثانوية شرعية' };
 export const categoryLabel: Record<string, string> = { sharia: 'المواد الشرعية', educational: 'المواد التربوية' };

@@ -23,7 +23,7 @@ export default async function Page(props: { searchParams?: Promise<{ error?: str
           <thead className="border-b border-ink-100 bg-ink-50">
             <tr>
               <th className={th}>الصف</th><th className={th}>المرحلة</th><th className={th}>الاختصاص</th>
-              <th className={th}>الشعب</th><th className={th}>الطلاب</th><th className={th}>الحصص الأسبوعية</th>
+              <th className={th}>الشعب</th><th className={th}>الطلاب</th><th className={th}>الحصص الأسبوعية</th><th className={th}>سلالم العلامات</th>
               <th className={th}><span className="sr-only">إجراءات</span></th>
             </tr>
           </thead>
@@ -36,6 +36,9 @@ export default async function Page(props: { searchParams?: Promise<{ error?: str
                 <td className={td}>{c.groups}</td>
                 <td className={td}>{c.students}</td>
                 <td className={td}><Badge tone={Number(c.periods) === target ? 'good' : 'warn'}>{c.periods} / {target}</Badge></td>
+                <td className={td}>
+                  {Number(c.missing_schemes) === 0 ? <Badge tone="good">مكتملة</Badge> : <Badge tone="warn">{c.missing_schemes} ناقصة</Badge>}
+                </td>
                 <td className={td}>
                   <RowActions editHref={`/dashboard/classes/${c.id}`} onDelete={deleteClass.bind(null, c.id)}
                     confirm={`حذف الصف «${c.name}»؟ سيُحذف سلّم علاماته وخطته.`} />
