@@ -9,7 +9,10 @@ type User = { id: string; name: string; email: string; password: string };
 
 async function getUser(email: string): Promise<User | undefined> {
   try {
-    const user = await sql<User[]>`SELECT id, name, email, password FROM users WHERE email = ${email}`;
+    const user = await sql<User[]>`
+      SELECT u.id, u.name, u.email, u.password
+      FROM users u LEFT JOIN schools s ON s.id = u.school_id
+      WHERE u.email = ${email} AND u.is_active AND (u.school_id IS NULL OR s.is_active)`;
     return user[0];
   } catch (error) {
     console.error('Failed to fetch user:', error);
@@ -28,7 +31,7 @@ export const { auth, signIn, signOut } = NextAuth({
         if (!parsed.success) return null;
         const user = await getUser(parsed.data.email);
         if (!user) return null;
-        return (await bcrypt.compare(parsed.data.password, user.password)) ? user : null;
+        return (await bcrypt.compare(parsed.data.password, user.password)) ? { id: user.id, name: user.name, email: user.email } : null;
       },
     }),
   ],

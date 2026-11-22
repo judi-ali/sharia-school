@@ -17,3 +17,14 @@ export const gradeLevelLabel: Record<string, string> = {
 
 export const toOptions = (m: Record<string, string>) =>
   Object.entries(m).map(([value, label]) => ({ value, label }));
+
+export const roleLabel: Record<string, string> = {
+  education_director: 'مدير التعليم الشرعي', school_director: 'مدير المدرسة', school_admin: 'إداري المدرسة',
+};
+export const schoolTypeLabel: Record<string, string> = { boys: 'بنين', girls: 'بنات', mixed: 'مختلطة' };
+export const entityLabel: Record<string, string> = {
+  student: 'الطلاب', teacher: 'المعلمون', group: 'الشعب', enrollment: 'تسجيل الطلاب في الشعب', assignment: 'إسناد المعلمين',
+  attendance: 'الحضور والغياب', grades: 'العلامات', timetable: 'الجدول الأسبوعي', route: 'خطوط النقل', passenger: 'ركاب النقل',
+  request: 'طلبات فتح الصفوف', inventory: 'المستلزمات', handout: 'تسليم الكتب', user: 'المستخدمون',
+};
+export const auditActionLabel: Record<string, string> = { create: 'إضافة', update: 'تعديل', delete: 'حذف', save: 'حفظ' };

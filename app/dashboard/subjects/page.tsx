@@ -5,18 +5,20 @@ import { deleteSubject } from '@/app/lib/actions';
 import { categoryLabel } from '@/app/lib/labels';
 import { EmptyRow, LinkButton, Notice, PageHeader, RowActions } from '@/app/ui/kit';
 import Search from '@/app/ui/search';
+import { requireScope } from '@/app/lib/session';
 import { tableWrap, td, th } from '@/app/ui/styles';
 
 export const metadata: Metadata = { title: 'المواد الدراسية' };
 
 export default async function Page(props: { searchParams?: Promise<{ query?: string; error?: string }> }) {
   const sp = await props.searchParams;
+  const canEdit = (await requireScope()).role === 'education_director';
   const subjects = await fetchSubjects(sp?.query ?? '');
 
   return (
     <>
       <PageHeader title="المواد الدراسية" hint="مواد الخطة الدرسية. تُربط المادة بالصف (مع عدد الحصص) من صفحة الصف."
-        action={<LinkButton href="/dashboard/subjects/new">إضافة مادة</LinkButton>} />
+        action={canEdit ? <LinkButton href="/dashboard/subjects/new">إضافة مادة</LinkButton> : undefined} />
       {sp?.error && <Notice>{sp.error}</Notice>}
       <Search placeholder="ابحث عن مادة" />
       <div className={tableWrap}>
@@ -35,10 +37,13 @@ export default async function Page(props: { searchParams?: Promise<{ query?: str
                 </tr>,
                 ...list.map((s) => (
                   <tr key={s.id}>
-                    <td className={td}><Link href={`/dashboard/subjects/${s.id}`} className="font-medium hover:underline">{s.name}</Link></td>
+                    <td className={td}>{canEdit ? <Link href={`/dashboard/subjects/${s.id}`} className="font-medium hover:underline">{s.name}</Link> : s.name}</td>
                     <td className={td}>
-                      <RowActions editHref={`/dashboard/subjects/${s.id}`} onDelete={deleteSubject.bind(null, s.id)}
+                      {canEdit && (
+                        <RowActions editHref={`/dashboard/subjects/${s.id}`} onDelete={deleteSubject.bind(null, s.id)}
                         confirm={`حذف المادة «${s.name}»؟`} />
+                    
+                      )}
                     </td>
                   </tr>
                 )),

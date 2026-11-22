@@ -4,6 +4,7 @@ import { fetchClass, fetchCurriculum, fetchSubjectOptions, getCurrentYear } from
 import { createClass, updateClass, removeCurriculum, saveCurriculum } from '@/app/lib/actions';
 import { categoryLabel, gradeLevelLabel, toOptions, trackLabel } from '@/app/lib/labels';
 import { isUuid } from '@/app/lib/utils';
+import { requireRole, requireScope } from '@/app/lib/session';
 import Link from 'next/link';
 import { Badge, Notice, PageHeader, Section } from '@/app/ui/kit';
 import { DeleteButton, FormShell, Input, Select } from '@/app/ui/form';
@@ -35,7 +36,10 @@ function PeriodsBar({ sharia, educational, target }: { sharia: number; education
 export default async function Page(props: { params: Promise<{ id: string }>; searchParams?: Promise<{ error?: string }> }) {
   const { id } = await props.params;
   const sp = await props.searchParams;
+  const scope = await requireScope();
+  const canEdit = scope.role === 'education_director'; // the plan is national: only the education director edits it
   const isNew = id === 'new';
+  if (isNew) await requireRole('education_director');
   if (!isNew && !isUuid(id)) notFound();
   const cls = isNew ? null : await fetchClass(id);
   if (!isNew && !cls) notFound();
@@ -64,11 +68,13 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
     <>
       <PageHeader title={cls.name} />
       {sp?.error && <Notice>{sp.error}</Notice>}
-      <FormShell action={updateClass.bind(null, id)} cancelHref="/dashboard/classes">
-        <Input name="name" label="اسم الصف" defaultValue={cls.name} required />
-        <Select name="grade_level" label="المستوى" options={levels} defaultValue={String(cls.grade_level)} />
-        <Select name="track" label="الاختصاص" options={tracks} defaultValue={cls.track} />
+      {canEdit && (
+              <FormShell action={updateClass.bind(null, id)} cancelHref="/dashboard/classes">
+          <Input name="name" label="اسم الصف" defaultValue={cls.name} required />
+          <Select name="grade_level" label="المستوى" options={levels} defaultValue={String(cls.grade_level)} />
+          <Select name="track" label="الاختصاص" options={tracks} defaultValue={cls.track} />
       </FormShell>
+      )}
 
       <Section title="مواد الصف والحصص الأسبوعية" hint={`الخطة الدرسية للعام ${year.name}: ${year.periods_per_day} حصص يومياً، مدة الحصة ${year.period_minutes} دقيقة.`}>
         <PeriodsBar sharia={sum('sharia')} educational={sum('educational')} target={target} />
@@ -91,6 +97,8 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
                     <td className={td}>
                       {isPart ? (
                         <span className="text-sm text-ink-700">ضمن «{c.part_of_name}»</span>
+                      ) : !canEdit ? (
+                        <span>{c.weekly_periods}</span>
                       ) : (
                         <form action={saveCurriculum.bind(null, id)} className="flex items-center gap-2">
                           <input type="hidden" name="subject_id" value={c.subject_id} />
@@ -103,6 +111,8 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
                     <td className={td}>
                       {c.is_parent ? (
                         <Badge>محسوبة تلقائياً</Badge>
+                      ) : !canEdit ? (
+                        c.scheme_total ? <Badge tone={c.scheme_provisional ? 'warn' : 'good'}>{c.scheme_provisional ? 'مؤقت · ' : ''}من {c.scheme_total}</Badge> : <Badge tone="warn">غير محدّد</Badge>
                       ) : (
                         <Link href={`/dashboard/classes/${id}/scheme/${c.subject_id}`} className="inline-flex items-center gap-2 hover:underline">
                           {c.scheme_total ? <Badge tone={c.scheme_provisional ? 'warn' : 'good'}>{c.scheme_provisional ? 'مؤقت · ' : ''}من {c.scheme_total}</Badge> : <Badge tone="warn">غير محدّد</Badge>}
@@ -111,7 +121,7 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
                       )}
                     </td>
                     <td className={td}>
-                      {!isPart && !c.is_parent && (
+                      {canEdit && !isPart && !c.is_parent && (
                         <div className="flex justify-end">
                           <DeleteButton action={removeCurriculum.bind(null, id, c.subject_id)} confirm={`إزالة «${c.name}» من خطة ${cls.name}؟`} label="إزالة" />
                         </div>
@@ -124,7 +134,8 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
           </table>
         </div>
 
-        <form action={saveCurriculum.bind(null, id)} className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-ink-100 bg-white p-4">
+        {canEdit && (
+          <form action={saveCurriculum.bind(null, id)} className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-ink-100 bg-white p-4">
           <div className="min-w-56 flex-1">
             <label htmlFor="subject_id" className="mb-1.5 block text-sm font-medium">إضافة مادة إلى الخطة</label>
             <select id="subject_id" name="subject_id" required defaultValue="" className={fieldClass}>
@@ -143,6 +154,7 @@ export default async function Page(props: { params: Promise<{ id: string }>; sea
           </div>
           <button className={btnPrimary}>إضافة المادة</button>
         </form>
+        )}
       </Section>
     </>
   );

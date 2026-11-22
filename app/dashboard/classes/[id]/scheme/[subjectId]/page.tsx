@@ -5,11 +5,13 @@ import { saveScheme } from '@/app/lib/actions';
 import { SLOTS, defaultLabels, maxOf, slotLabel } from '@/app/lib/grading';
 import { isUuid } from '@/app/lib/utils';
 import { Notice, PageHeader } from '@/app/ui/kit';
+import { requireRole } from '@/app/lib/session';
 import { FormShell, Input } from '@/app/ui/form';
 
 export const metadata: Metadata = { title: 'سلّم العلامات' };
 
 export default async function Page(props: { params: Promise<{ id: string; subjectId: string }> }) {
+  await requireRole('education_director');
   const { id, subjectId } = await props.params;
   if (!isUuid(id) || !isUuid(subjectId)) notFound();
   const [cls, subject, scheme] = await Promise.all([fetchClass(id), fetchSubject(subjectId), fetchSchemeByClass(id, subjectId)]);

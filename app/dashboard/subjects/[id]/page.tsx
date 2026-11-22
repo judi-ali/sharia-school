@@ -5,11 +5,13 @@ import { createSubject, updateSubject } from '@/app/lib/actions';
 import { categoryLabel, toOptions } from '@/app/lib/labels';
 import { isUuid } from '@/app/lib/utils';
 import { PageHeader } from '@/app/ui/kit';
+import { requireRole } from '@/app/lib/session';
 import { FormShell, Input, Select } from '@/app/ui/form';
 
 export const metadata: Metadata = { title: 'بيانات المادة' };
 
 export default async function Page(props: { params: Promise<{ id: string }> }) {
+  await requireRole('education_director');
   const { id } = await props.params;
   const isNew = id === 'new';
   if (!isNew && !isUuid(id)) notFound();

@@ -9,11 +9,8 @@ cp .env.example .env     # fill POSTGRES_URL, AUTH_SECRET, SEED_SECRET
 pnpm dev
 ```
 Open `http://localhost:3000/seed?secret=<SEED_SECRET>` once to create tables and Arabic sample data
-(the route safely upgrades the previous schema and preserves existing records). Then log in with `admin@school.test`
+(add `&reset=1` to drop and rebuild everything — required after schema changes). Then log in with `admin@school.test`
 and `SEED_ADMIN_PASSWORD` (default `ChangeMe123!`). **Delete `app/seed` before going live.**
-
-`/seed?secret=...&reset=1` drops and rebuilds all tables and data. Use it only for a disposable database;
-back up the database before any reset.
 
 ## Deploy (Vercel)
 1. Create a Neon database from Vercel Storage and copy the **pooled** URL into `POSTGRES_URL`.
@@ -44,3 +41,21 @@ Students (address, second phone, documents status, bus), attendance, buses (`/da
 bell schedule and the weekly timetable (`/dashboard/timetable`, per group or per teacher; a teacher can't be in two groups
 at once). Grading schemes marked **مؤقت** (PE/Arts, Activities, Sharia Sciences) are placeholders until their books are issued.
 `/seed` rolls back if a class doesn't total 35 periods or a timetable differs from the plan.
+
+## Schools, roles and history
+Several Sharia schools share one database; every school-level table carries its `school_id` (composite foreign keys
+stop a student, teacher, bus or group from being linked to another school's records).
+
+| Role | Scope | Can |
+|---|---|---|
+| مدير التعليم الشرعي `education_director` | all schools | add/edit schools and set each school director's credentials; edit the national plan (classes, subjects, weekly periods, grading schemes) |
+| مدير المدرسة `school_director` | one school | everything in the school, create/disable the school's admin users, read the **operations history** |
+| إداري المدرسة `school_admin` | one school | manage the school's data (not users, not history); the plan is read-only |
+
+Every user has a profile page (`/dashboard/profile`) to change name, email and password (current password required for
+email/password changes). Every change to school data is recorded in `audit_log` (who, what, before → after); the table
+is append-only (a database trigger blocks updates and deletes) and is shown only to the school director at
+`/dashboard/history`. Requires PostgreSQL 15+ (Neon is fine).
+
+Seeded accounts (password = `SEED_ADMIN_PASSWORD`, default `ChangeMe123!` — change them): `education@sharia.test`
+(education director), `director@school.test` (director of the seeded school), `admin@school.test` (school admin).

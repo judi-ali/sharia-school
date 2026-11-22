@@ -5,18 +5,20 @@ import { deleteClass } from '@/app/lib/actions';
 import { stageLabel, trackLabel } from '@/app/lib/labels';
 import { Badge, LinkButton, Notice, PageHeader, RowActions } from '@/app/ui/kit';
 import { tableWrap, td, th } from '@/app/ui/styles';
+import { requireScope } from '@/app/lib/session';
 
 export const metadata: Metadata = { title: 'الصفوف' };
 
 export default async function Page(props: { searchParams?: Promise<{ error?: string }> }) {
   const sp = await props.searchParams;
+  const canEdit = (await requireScope()).role === 'education_director';
   const [classes, year] = await Promise.all([fetchClasses(), getCurrentYear()]);
   const target = year.periods_per_day * year.school_days_per_week;
 
   return (
     <>
       <PageHeader title="الصفوف" hint={`العام الدراسي ${year.name}. افتح الصف لإدارة موادّه وحصصه الأسبوعية (المطلوب ${target} حصة).`}
-        action={<LinkButton href="/dashboard/classes/new">إضافة صف</LinkButton>} />
+        action={canEdit ? <LinkButton href="/dashboard/classes/new">إضافة صف</LinkButton> : undefined} />
       {sp?.error && <Notice>{sp.error}</Notice>}
       <div className={tableWrap}>
         <table className="min-w-full text-sm">
@@ -40,8 +42,10 @@ export default async function Page(props: { searchParams?: Promise<{ error?: str
                   {Number(c.missing_schemes) === 0 ? <Badge tone="good">مكتملة</Badge> : <Badge tone="warn">{c.missing_schemes} ناقصة</Badge>}
                 </td>
                 <td className={td}>
-                  <RowActions editHref={`/dashboard/classes/${c.id}`} onDelete={deleteClass.bind(null, c.id)}
+                  {canEdit && (
+                    <RowActions editHref={`/dashboard/classes/${c.id}`} onDelete={deleteClass.bind(null, c.id)}
                     confirm={`حذف الصف «${c.name}»؟ سيُحذف سلّم علاماته وخطته.`} />
+                  )}
                 </td>
               </tr>
             ))}

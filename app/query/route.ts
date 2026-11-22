@@ -1,26 +1,31 @@
-import postgres from "postgres";
+import { sql } from '@/app/lib/db';
 
-const sql = postgres(process.env.POSTGRES_URL!, { ssl: "require" });
+const adminEmail = 'admin@school.test';
+const hashedPassword = '$2b$10$.tHUpRYKxZJd0nnlGFmEief0U1bdIKoEhfy9GYDbjMP4UWuDqSWb6';
 
-async function listInvoices() {
-  const data = await sql`
-    UPDATE users
-SET password = '$2b$10$P6BiMAEVQAN3NxZi2pIgZ.vT4j4JhaLDg1FD6HXKZi/8A5VNahUt.'
-WHERE email = 'admin@school.test'
-RETURNING email;
-  `;
+export async function POST(request: Request) {
+  const secret = process.env.SEED_SECRET;
+  if (!secret) {
+    return Response.json({ error: 'Password reset is not configured.' }, { status: 503 });
+  }
+  if (request.headers.get('authorization') !== `Bearer ${secret}`) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
-  return data;
-}
-
-export async function GET() {
-  // return Response.json({
-  //   message:
-  //     'Uncomment this file and remove this line. You can delete this file when you are finished.',
-  // });
   try {
-    return Response.json(await listInvoices());
+    const rows = await sql`
+      UPDATE users
+      SET password = ${hashedPassword}
+      WHERE email = ${adminEmail}
+      RETURNING email`;
+
+    if (rows.length === 0) {
+      return Response.json({ error: 'Admin account not found.' }, { status: 404 });
+    }
+
+    return Response.json({ message: 'Admin password reset successfully.', email: rows[0].email });
   } catch (error) {
-    return Response.json({ error }, { status: 500 });
+    console.error('Failed to reset admin password:', error);
+    return Response.json({ error: 'Failed to reset admin password.' }, { status: 500 });
   }
 }

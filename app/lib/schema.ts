@@ -2,120 +2,41 @@
 // Use `dropAll` (via /seed?reset=1) when the structure changes during development.
 export const dropAll = /* sql */ `
 DROP VIEW IF EXISTS subject_results, computed_results, final_grades, grade_results, curriculum_without_scheme, class_weekly_load CASCADE;
-DROP TABLE IF EXISTS grades, attendance, timetable_entries, textbook_handouts, textbooks, class_requests,
+DROP TABLE IF EXISTS audit_log, grades, attendance, timetable_entries, textbook_handouts, textbooks, class_requests,
   inventory_items, bell_schedule, school_profile, teaching_assignments, enrollments,
   grading_schemes, curriculum, class_groups, students, transport_routes, teachers, subjects,
-  classes, academic_years, users CASCADE;
+  classes, academic_years, users, schools CASCADE;
+DROP FUNCTION IF EXISTS audit_log_immutable();
 DROP FUNCTION IF EXISTS block_computed_grades();
 `;
 
-export const prepareLegacySchema = /* sql */ `
-DO $$
-BEGIN
-  IF to_regclass('public.teachers') IS NOT NULL THEN
-    ALTER TABLE teachers ALTER COLUMN email DROP NOT NULL;
-  END IF;
-
-  IF to_regclass('public.students') IS NOT NULL THEN
-    ALTER TABLE students ALTER COLUMN student_number DROP NOT NULL;
-    ALTER TABLE students ALTER COLUMN gender SET DEFAULT 'male';
-    ALTER TABLE students ADD COLUMN IF NOT EXISTS guardian_phone2 VARCHAR(30);
-    ALTER TABLE students ADD COLUMN IF NOT EXISTS address TEXT;
-    ALTER TABLE students ADD COLUMN IF NOT EXISTS registration_status VARCHAR(10) NOT NULL DEFAULT 'complete';
-    ALTER TABLE students ADD COLUMN IF NOT EXISTS missing_documents TEXT;
-    ALTER TABLE students ADD COLUMN IF NOT EXISTS transport_route_id UUID;
-    ALTER TABLE students DROP CONSTRAINT IF EXISTS students_status_check;
-    ALTER TABLE students ADD CONSTRAINT students_status_check
-      CHECK (status IN ('active','inactive','graduated','transferred'));
-  END IF;
-
-  IF to_regclass('public.class_groups') IS NOT NULL THEN
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS class_groups_id_academic_year_id_key
-      ON public.class_groups (id, academic_year_id)';
-  END IF;
-
-  IF to_regclass('public.curriculum') IS NOT NULL THEN
-    ALTER TABLE curriculum ADD COLUMN IF NOT EXISTS part_of_subject_id UUID;
-    ALTER TABLE curriculum DROP CONSTRAINT IF EXISTS curriculum_weekly_periods_check;
-    ALTER TABLE curriculum DROP CONSTRAINT IF EXISTS curriculum_parent_periods_check;
-    ALTER TABLE curriculum DROP CONSTRAINT IF EXISTS curriculum_parent_not_self_check;
-    ALTER TABLE curriculum ADD CONSTRAINT curriculum_weekly_periods_check
-      CHECK (weekly_periods BETWEEN 0 AND 35);
-    ALTER TABLE curriculum ADD CONSTRAINT curriculum_parent_periods_check
-      CHECK ((part_of_subject_id IS NULL AND weekly_periods >= 1)
-          OR (part_of_subject_id IS NOT NULL AND weekly_periods = 0));
-    ALTER TABLE curriculum ADD CONSTRAINT curriculum_parent_not_self_check
-      CHECK (part_of_subject_id IS DISTINCT FROM subject_id);
-  END IF;
-
-  IF to_regclass('public.teaching_assignments') IS NOT NULL THEN
-    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS teaching_assignments_class_group_id_subject_id_teacher_id_key
-      ON public.teaching_assignments (class_group_id, subject_id, teacher_id)';
-  END IF;
-
-  IF to_regclass('public.grading_schemes') IS NOT NULL THEN
-    ALTER TABLE grading_schemes ADD COLUMN IF NOT EXISTS activity_max SMALLINT NOT NULL DEFAULT 0;
-    ALTER TABLE grading_schemes ADD COLUMN IF NOT EXISTS quiz2_max SMALLINT NOT NULL DEFAULT 0;
-    ALTER TABLE grading_schemes ADD COLUMN IF NOT EXISTS exam2_max SMALLINT NOT NULL DEFAULT 0;
-    ALTER TABLE grading_schemes ADD COLUMN IF NOT EXISTS pass_mark SMALLINT;
-    ALTER TABLE grading_schemes ADD COLUMN IF NOT EXISTS is_provisional BOOLEAN NOT NULL DEFAULT FALSE;
-    ALTER TABLE grading_schemes ADD COLUMN IF NOT EXISTS labels JSONB NOT NULL DEFAULT '{}';
-    ALTER TABLE grading_schemes DROP CONSTRAINT IF EXISTS grading_schemes_coursework_total_check;
-    ALTER TABLE grading_schemes DROP CONSTRAINT IF EXISTS grading_schemes_exam_total_check;
-    ALTER TABLE grading_schemes DROP CONSTRAINT IF EXISTS grading_schemes_pass_mark_check;
-    ALTER TABLE grading_schemes ADD CONSTRAINT grading_schemes_coursework_total_check
-      CHECK (oral_max + homework_max + activity_max + quiz_max + quiz2_max = total_max) NOT VALID;
-    ALTER TABLE grading_schemes ADD CONSTRAINT grading_schemes_exam_total_check
-      CHECK (exam_max + exam2_max = total_max) NOT VALID;
-    ALTER TABLE grading_schemes ADD CONSTRAINT grading_schemes_pass_mark_check
-      CHECK (pass_mark IS NULL OR pass_mark BETWEEN 0 AND total_max) NOT VALID;
-  END IF;
-
-  IF to_regclass('public.grades') IS NOT NULL THEN
-    ALTER TABLE grades ADD COLUMN IF NOT EXISTS activity NUMERIC(5,2) CHECK (activity >= 0);
-    ALTER TABLE grades ADD COLUMN IF NOT EXISTS quiz2 NUMERIC(5,2) CHECK (quiz2 >= 0);
-    ALTER TABLE grades ADD COLUMN IF NOT EXISTS exam2 NUMERIC(5,2) CHECK (exam2 >= 0);
-  END IF;
-END
-$$;
-`;
-
-export const finalizeLegacySchema = /* sql */ `
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'public.curriculum'::regclass
-      AND confrelid = 'public.curriculum'::regclass
-      AND contype = 'f'
-  ) THEN
-    ALTER TABLE curriculum ADD CONSTRAINT curriculum_part_of_subject_fkey
-      FOREIGN KEY (academic_year_id, class_id, part_of_subject_id)
-      REFERENCES curriculum (academic_year_id, class_id, subject_id) ON DELETE RESTRICT;
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'public.students'::regclass
-      AND confrelid = 'public.transport_routes'::regclass
-      AND contype = 'f'
-  ) THEN
-    ALTER TABLE students ADD CONSTRAINT students_transport_route_id_fkey
-      FOREIGN KEY (transport_route_id) REFERENCES transport_routes(id) ON DELETE SET NULL;
-  END IF;
-END
-$$;
-`;
-
 export const schema = /* sql */ `
--- ───────── Auth ─────────
-CREATE TABLE IF NOT EXISTS users (
-  id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name     VARCHAR(255) NOT NULL,
-  email    TEXT NOT NULL UNIQUE,
-  password TEXT NOT NULL,
-  role     VARCHAR(20) NOT NULL DEFAULT 'admin' CHECK (role IN ('admin'))
+-- ───────── Schools and users ─────────
+-- Every Sharia school is a row here; all school-level data below carries its school_id.
+CREATE TABLE IF NOT EXISTS schools (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        VARCHAR(255) NOT NULL UNIQUE,
+  gender      VARCHAR(10) NOT NULL DEFAULT 'boys' CHECK (gender IN ('boys','girls','mixed')),
+  directorate VARCHAR(255),                                   -- مديرية الأوقاف
+  address     TEXT,
+  phone       VARCHAR(30),
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Roles: education_director (global, no school) · school_director · school_admin (both belong to one school)
+CREATE TABLE IF NOT EXISTS users (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       VARCHAR(255) NOT NULL,
+  email      TEXT NOT NULL UNIQUE,
+  password   TEXT NOT NULL,
+  role       VARCHAR(20) NOT NULL CHECK (role IN ('education_director','school_director','school_admin')),
+  school_id  UUID REFERENCES schools(id) ON DELETE RESTRICT,
+  is_active  BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((role = 'education_director' AND school_id IS NULL) OR (role <> 'education_director' AND school_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_director_per_school ON users (school_id) WHERE role = 'school_director';
 
 -- ───────── School calendar ─────────
 -- Period settings come from the ministry decision (7 periods/day, 45 min).
@@ -133,17 +54,10 @@ CREATE TABLE IF NOT EXISTS academic_years (
 CREATE UNIQUE INDEX IF NOT EXISTS one_current_year
   ON academic_years (is_current) WHERE is_current;
 
--- The school itself (single row)
-CREATE TABLE IF NOT EXISTS school_profile (
-  id        BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
-  name      VARCHAR(255) NOT NULL,
-  gender    VARCHAR(10) NOT NULL DEFAULT 'boys' CHECK (gender IN ('boys','girls','mixed')),
-  directorate VARCHAR(255)
-);
-
 -- The school day: assembly, lessons (numbered) and breaks, with real times.
 CREATE TABLE IF NOT EXISTS bell_schedule (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id        UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
   academic_year_id UUID NOT NULL REFERENCES academic_years(id) ON DELETE CASCADE,
   position         SMALLINT NOT NULL,
   kind             VARCHAR(10) NOT NULL CHECK (kind IN ('assembly','lesson','break')),
@@ -154,8 +68,8 @@ CREATE TABLE IF NOT EXISTS bell_schedule (
   note             VARCHAR(120),
   CHECK (ends_at > starts_at),
   CHECK ((kind = 'lesson') = (period_no IS NOT NULL)),
-  UNIQUE (academic_year_id, position),
-  UNIQUE (academic_year_id, period_no)
+  UNIQUE (school_id, academic_year_id, position),
+  UNIQUE (school_id, academic_year_id, period_no)
 );
 
 -- ───────── Structure ─────────
@@ -176,37 +90,45 @@ CREATE TABLE IF NOT EXISTS classes (
 -- "Class group" = a section of a class in a given year (السابع / الشعبة 1)
 CREATE TABLE IF NOT EXISTS class_groups (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id        UUID NOT NULL REFERENCES schools(id) ON DELETE RESTRICT,
   class_id         UUID NOT NULL REFERENCES classes(id) ON DELETE RESTRICT,
   academic_year_id UUID NOT NULL REFERENCES academic_years(id) ON DELETE RESTRICT,
-  name             VARCHAR(50) NOT NULL,                    -- 'Group 1'
+  name             VARCHAR(50) NOT NULL,                    -- 'الشعبة الأولى'
   capacity         SMALLINT CHECK (capacity > 0),
-  UNIQUE (class_id, academic_year_id, name),
-  UNIQUE (id, academic_year_id, class_id),                  -- target of composite FKs below
-  UNIQUE (id, academic_year_id)
+  UNIQUE (school_id, class_id, academic_year_id, name),
+  UNIQUE (id, academic_year_id, class_id, school_id),       -- targets of the composite FKs below
+  UNIQUE (id, academic_year_id, school_id)
 );
 
 -- ───────── People ─────────
 CREATE TABLE IF NOT EXISTS teachers (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id  UUID NOT NULL REFERENCES schools(id) ON DELETE RESTRICT,
   full_name  VARCHAR(255) NOT NULL,
-  email      TEXT UNIQUE,
+  email      TEXT,
   phone      VARCHAR(30),
   hire_date  DATE,
   status     VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (school_id, email),
+  UNIQUE (id, school_id)
 );
 
 -- School buses ("سرافيس"): one row per route
 CREATE TABLE IF NOT EXISTS transport_routes (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name         VARCHAR(120) NOT NULL UNIQUE,                 -- 'دورة الأشرفية'
+  school_id    UUID NOT NULL REFERENCES schools(id) ON DELETE RESTRICT,
+  name         VARCHAR(120) NOT NULL,                        -- 'دورة الأشرفية'
   driver_name  VARCHAR(255) NOT NULL,
-  driver_phone VARCHAR(30)
+  driver_phone VARCHAR(30),
+  UNIQUE (school_id, name),
+  UNIQUE (id, school_id)
 );
 
 CREATE TABLE IF NOT EXISTS students (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_number      VARCHAR(30) UNIQUE,                    -- school-issued ID (optional until issued)
+  school_id           UUID NOT NULL REFERENCES schools(id) ON DELETE RESTRICT,
+  student_number      VARCHAR(30),                           -- school-issued ID (optional until issued)
   full_name           VARCHAR(255) NOT NULL,
   gender              VARCHAR(10) NOT NULL DEFAULT 'male' CHECK (gender IN ('male','female')),
   date_of_birth       DATE,
@@ -216,10 +138,14 @@ CREATE TABLE IF NOT EXISTS students (
   address             TEXT,
   registration_status VARCHAR(10) NOT NULL DEFAULT 'complete' CHECK (registration_status IN ('complete','pending')),
   missing_documents   TEXT,                                  -- papers still required
-  transport_route_id  UUID REFERENCES transport_routes(id) ON DELETE SET NULL,
+  transport_route_id  UUID,
   status              VARCHAR(20) NOT NULL DEFAULT 'active'
                       CHECK (status IN ('active','inactive','graduated','transferred')),
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (school_id, student_number),
+  UNIQUE (id, school_id),
+  FOREIGN KEY (transport_route_id, school_id) REFERENCES transport_routes (id, school_id)
+    ON DELETE SET NULL (transport_route_id)                  -- a bus of the same school only
 );
 
 -- Subjects of the official plan: Sharia subjects + educational subjects
@@ -255,12 +181,14 @@ CREATE TABLE IF NOT EXISTS curriculum (
 -- guarantees they match the group (the app fills them from the group).
 CREATE TABLE IF NOT EXISTS enrollments (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id       UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  school_id        UUID NOT NULL,
+  student_id       UUID NOT NULL,
   class_group_id   UUID NOT NULL,
   academic_year_id UUID NOT NULL,
   class_id         UUID NOT NULL,
-  FOREIGN KEY (class_group_id, academic_year_id, class_id)
-    REFERENCES class_groups (id, academic_year_id, class_id) ON DELETE RESTRICT,
+  FOREIGN KEY (student_id, school_id) REFERENCES students (id, school_id) ON DELETE CASCADE,
+  FOREIGN KEY (class_group_id, academic_year_id, class_id, school_id)
+    REFERENCES class_groups (id, academic_year_id, class_id, school_id) ON DELETE RESTRICT,
   UNIQUE (student_id, academic_year_id),
   UNIQUE (id, academic_year_id, class_id)                   -- target of grades FK
 );
@@ -270,13 +198,15 @@ CREATE INDEX IF NOT EXISTS enrollments_group_idx ON enrollments (class_group_id)
 -- The subject MUST be in the curriculum of the group's class for that year.
 CREATE TABLE IF NOT EXISTS teaching_assignments (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  teacher_id       UUID NOT NULL REFERENCES teachers(id) ON DELETE RESTRICT,
+  school_id        UUID NOT NULL,
+  teacher_id       UUID NOT NULL,
   class_group_id   UUID NOT NULL,
   academic_year_id UUID NOT NULL,
   class_id         UUID NOT NULL,
   subject_id       UUID NOT NULL,
-  FOREIGN KEY (class_group_id, academic_year_id, class_id)
-    REFERENCES class_groups (id, academic_year_id, class_id) ON DELETE CASCADE,
+  FOREIGN KEY (teacher_id, school_id) REFERENCES teachers (id, school_id) ON DELETE RESTRICT,
+  FOREIGN KEY (class_group_id, academic_year_id, class_id, school_id)
+    REFERENCES class_groups (id, academic_year_id, class_id, school_id) ON DELETE CASCADE,
   FOREIGN KEY (academic_year_id, class_id, subject_id)
     REFERENCES curriculum (academic_year_id, class_id, subject_id) ON DELETE RESTRICT,
   UNIQUE (class_group_id, subject_id),                      -- one teacher per subject per group
@@ -302,14 +232,17 @@ CREATE INDEX IF NOT EXISTS attendance_date_idx ON attendance (date);
 -- day_of_week: 0 = Sunday ... 4 = Thursday.
 CREATE TABLE IF NOT EXISTS timetable_entries (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id        UUID NOT NULL,
   class_group_id   UUID NOT NULL,
   academic_year_id UUID NOT NULL,
   day_of_week      SMALLINT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
   period_no        SMALLINT NOT NULL,
   subject_id       UUID NOT NULL,
   teacher_id       UUID NOT NULL,
-  FOREIGN KEY (class_group_id, academic_year_id) REFERENCES class_groups (id, academic_year_id) ON DELETE CASCADE,
-  FOREIGN KEY (academic_year_id, period_no) REFERENCES bell_schedule (academic_year_id, period_no) ON DELETE RESTRICT,
+  FOREIGN KEY (class_group_id, academic_year_id, school_id)
+    REFERENCES class_groups (id, academic_year_id, school_id) ON DELETE CASCADE,
+  FOREIGN KEY (school_id, academic_year_id, period_no)
+    REFERENCES bell_schedule (school_id, academic_year_id, period_no) ON DELETE RESTRICT,
   FOREIGN KEY (class_group_id, subject_id, teacher_id)
     REFERENCES teaching_assignments (class_group_id, subject_id, teacher_id) ON UPDATE CASCADE ON DELETE CASCADE,
   UNIQUE (class_group_id, day_of_week, period_no),
@@ -344,6 +277,7 @@ CREATE TABLE IF NOT EXISTS textbook_handouts (
 -- ───────── Interest in opening a class ("رغبات لفتح صفوف") ─────────
 CREATE TABLE IF NOT EXISTS class_requests (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id  UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
   class_id   UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
   full_name  VARCHAR(255) NOT NULL,
   phone      VARCHAR(30),
@@ -355,12 +289,39 @@ CREATE TABLE IF NOT EXISTS class_requests (
 -- ───────── School supplies and equipment ─────────
 CREATE TABLE IF NOT EXISTS inventory_items (
   id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
   name      VARCHAR(150) NOT NULL,
   unit      VARCHAR(60),
   quantity  INTEGER CHECK (quantity >= 0),
   condition VARCHAR(10) CHECK (condition IN ('new','old')),
   note      TEXT
 );
+
+-- ───────── Operations history (who changed what) ─────────
+-- Written by the application for every change to school data; rows can never be edited or deleted.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id   UUID REFERENCES schools(id) ON DELETE RESTRICT,
+  user_id     UUID REFERENCES users(id) ON DELETE RESTRICT,
+  user_name   VARCHAR(255) NOT NULL,                         -- kept even if the user is renamed
+  user_role   VARCHAR(20) NOT NULL,
+  action      VARCHAR(10) NOT NULL CHECK (action IN ('create','update','delete','save')),
+  entity      VARCHAR(30) NOT NULL,
+  entity_id   UUID,
+  description TEXT NOT NULL,
+  changes     JSONB,                                          -- [{field, from, to}] for updates
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS audit_school_time_idx ON audit_log (school_id, created_at DESC);
+
+CREATE OR REPLACE FUNCTION audit_log_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_log rows cannot be changed or deleted';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS audit_log_no_change ON audit_log;
+CREATE TRIGGER audit_log_no_change BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
 
 -- ───────── Grading ─────────
 -- Max marks per class AND subject, from the ministry grade books.
@@ -512,4 +473,9 @@ SELECT
 FROM curriculum cu
 JOIN subjects s ON s.id = cu.subject_id
 GROUP BY cu.academic_year_id, cu.class_id;
+
+CREATE INDEX IF NOT EXISTS students_school_idx ON students (school_id);
+CREATE INDEX IF NOT EXISTS teachers_school_idx ON teachers (school_id);
+CREATE INDEX IF NOT EXISTS class_groups_school_idx ON class_groups (school_id);
+CREATE INDEX IF NOT EXISTS enrollments_school_idx ON enrollments (school_id);
 `;

@@ -1,10 +1,12 @@
 import bcrypt from 'bcrypt';
 import { sql } from '../lib/db';
-import { schema, dropAll, prepareLegacySchema, finalizeLegacySchema } from '../lib/schema';
-import { academicYear, admin, classes, subjects, gradingSchemes, compositeSubjects } from '../lib/placeholder-data';
+import { schema, dropAll } from '../lib/schema';
+import {
+  academicYear, admin, educationDirector, schoolDirector, classes, subjects, gradingSchemes, compositeSubjects, defaultBellSchedule,
+} from '../lib/placeholder-data';
 import {
   school, students, groups, attendance, transportRoutes, classRequests, inventory, textbooks,
-  teachers, teachingAssignments, bellSchedule, timetable,
+  teachers, teachingAssignments, timetable,
 } from '../lib/school-data';
 
 const GRADE = 'السابع'; // the only class opened so far
@@ -19,25 +21,27 @@ export async function GET(request: Request) {
   try {
     const report = await sql.begin(async (tx) => {
       if (url.searchParams.get('reset') === '1') await tx.unsafe(dropAll);
-      await tx.unsafe(prepareLegacySchema);
       await tx.unsafe(schema);
-      await tx.unsafe(finalizeLegacySchema);
 
-      // 1. Admin, academic year, school profile, bell schedule
+      // 1. Accounts, academic year, the school and its bell schedule
       const hash = await bcrypt.hash(process.env.SEED_ADMIN_PASSWORD ?? admin.password, 10);
-      await tx`INSERT INTO users (name, email, password) VALUES (${admin.name}, ${admin.email}, ${hash}) ON CONFLICT (email) DO NOTHING`;
+      await tx`INSERT INTO users (name, email, password, role) VALUES (${educationDirector.name}, ${educationDirector.email}, ${hash}, 'education_director')
+               ON CONFLICT (email) DO NOTHING`;
       await tx`
         INSERT INTO academic_years (name, start_date, end_date, is_current, periods_per_day, period_minutes, school_days_per_week)
         VALUES (${academicYear.name}, ${academicYear.start_date}, ${academicYear.end_date}, TRUE,
                 ${academicYear.periods_per_day}, ${academicYear.period_minutes}, ${academicYear.school_days_per_week})
         ON CONFLICT (name) DO NOTHING`;
+      await tx`INSERT INTO schools (name, gender) VALUES (${school.name}, ${school.gender}) ON CONFLICT (name) DO NOTHING`;
+      const [{ id: schoolId }] = await tx`SELECT id FROM schools WHERE name = ${school.name}`;
+      await tx`INSERT INTO users (name, email, password, role, school_id) VALUES (${schoolDirector.name}, ${schoolDirector.email}, ${hash}, 'school_director', ${schoolId})
+               ON CONFLICT (email) DO NOTHING`;
+      await tx`INSERT INTO users (name, email, password, role, school_id) VALUES (${admin.name}, ${admin.email}, ${hash}, 'school_admin', ${schoolId})
+               ON CONFLICT (email) DO NOTHING`;
       await tx`
-        INSERT INTO school_profile (id, name, gender) VALUES (TRUE, ${school.name}, ${school.gender})
-        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, gender = EXCLUDED.gender`;
-      await tx`
-        INSERT INTO bell_schedule (academic_year_id, position, kind, period_no, label, starts_at, ends_at, note)
-        SELECT y.id, r.position, r.kind, r.period_no, r.label, r.starts_at::time, r.ends_at::time, r.note
-        FROM jsonb_to_recordset(${tx.json(bellSchedule)})
+        INSERT INTO bell_schedule (school_id, academic_year_id, position, kind, period_no, label, starts_at, ends_at, note)
+        SELECT ${schoolId}::uuid, y.id, r.position, r.kind, r.period_no, r.label, r.starts_at::time, r.ends_at::time, r.note
+        FROM jsonb_to_recordset(${tx.json(defaultBellSchedule)})
           AS r(position int, kind text, period_no int, label text, starts_at text, ends_at text, note text)
         JOIN academic_years y ON y.name = ${academicYear.name}
         ON CONFLICT DO NOTHING`;
@@ -46,8 +50,8 @@ export async function GET(request: Request) {
       await tx`INSERT INTO classes ${tx(classes, 'name', 'grade_level', 'track')} ON CONFLICT (name) DO NOTHING`;
       for (const g of groups) {
         await tx`
-          INSERT INTO class_groups (class_id, academic_year_id, name)
-          SELECT c.id, y.id, ${g}::text FROM classes c, academic_years y
+          INSERT INTO class_groups (school_id, class_id, academic_year_id, name)
+          SELECT ${schoolId}::uuid, c.id, y.id, ${g}::text FROM classes c, academic_years y
           WHERE c.name = ${GRADE} AND y.name = ${academicYear.name}
           ON CONFLICT DO NOTHING`;
       }
@@ -91,73 +95,55 @@ export async function GET(request: Request) {
         JOIN classes c ON c.name = r.cls JOIN subjects s ON s.name = r.subject
         ON CONFLICT DO NOTHING`;
 
-      await tx`
-        INSERT INTO grading_schemes (class_id, subject_id, oral_max, homework_max, activity_max, quiz_max, quiz2_max,
-                                   exam_max, exam2_max, total_max, pass_mark, is_provisional, labels)
-        SELECT cu.class_id, cu.subject_id, d.oral_max, d.homework_max, d.activity_max, d.quiz_max, d.quiz2_max,
-             d.exam_max, d.exam2_max, d.total_max, d.pass_mark, d.is_provisional, d.labels
-        FROM curriculum cu
-        JOIN grading_schemes d ON d.class_id = cu.class_id AND d.subject_id IS NULL
-        WHERE NOT EXISTS (
-        SELECT 1 FROM curriculum p
-        WHERE p.academic_year_id = cu.academic_year_id AND p.class_id = cu.class_id
-          AND p.part_of_subject_id = cu.subject_id
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM grading_schemes s
-          WHERE s.class_id = cu.class_id AND s.subject_id = cu.subject_id
-        )
-        ON CONFLICT DO NOTHING`;
-
       // 4. Teachers, buses, students (+ enrollment, bus), teaching assignments
       await tx`
-        INSERT INTO teachers (full_name)
-        SELECT r.full_name FROM jsonb_array_elements_text(${tx.json(teachers)}) AS r(full_name)
-        WHERE NOT EXISTS (SELECT 1 FROM teachers t WHERE t.full_name = r.full_name)`;
+        INSERT INTO teachers (school_id, full_name)
+        SELECT ${schoolId}::uuid, r.full_name FROM jsonb_array_elements_text(${tx.json(teachers)}) AS r(full_name)
+        WHERE NOT EXISTS (SELECT 1 FROM teachers t WHERE t.school_id = ${schoolId}::uuid AND t.full_name = r.full_name)`;
       await tx`
-        INSERT INTO transport_routes (name, driver_name, driver_phone)
-        SELECT r.name, r.driver_name, r.driver_phone
+        INSERT INTO transport_routes (school_id, name, driver_name, driver_phone)
+        SELECT ${schoolId}::uuid, r.name, r.driver_name, r.driver_phone
         FROM jsonb_to_recordset(${tx.json(transportRoutes)}) AS r(name text, driver_name text, driver_phone text)
-        WHERE NOT EXISTS (SELECT 1 FROM transport_routes t WHERE t.name = r.name)`;
+        WHERE NOT EXISTS (SELECT 1 FROM transport_routes t WHERE t.school_id = ${schoolId}::uuid AND t.name = r.name)`;
 
       const studentRows = students.map((s) => ({ ...s, route_name: s.route === null ? null : transportRoutes[s.route].name }));
       await tx`
-        INSERT INTO students (full_name, status, registration_status, missing_documents, address,
+        INSERT INTO students (school_id, full_name, status, registration_status, missing_documents, address,
                               guardian_phone, guardian_phone2, transport_route_id)
-        SELECT r.full_name, r.status, r.registration_status, r.missing_documents, r.address,
+        SELECT ${schoolId}::uuid, r.full_name, r.status, r.registration_status, r.missing_documents, r.address,
                r.guardian_phone, r.guardian_phone2, tr.id
         FROM jsonb_to_recordset(${tx.json(studentRows)})
           AS r(full_name text, status text, registration_status text, missing_documents text, address text,
                guardian_phone text, guardian_phone2 text, route_name text)
-        LEFT JOIN transport_routes tr ON tr.name = r.route_name
-        WHERE NOT EXISTS (SELECT 1 FROM students s WHERE s.full_name = r.full_name)`;
+        LEFT JOIN transport_routes tr ON tr.name = r.route_name AND tr.school_id = ${schoolId}::uuid
+        WHERE NOT EXISTS (SELECT 1 FROM students s WHERE s.school_id = ${schoolId}::uuid AND s.full_name = r.full_name)`;
       await tx`
-        INSERT INTO enrollments (student_id, class_group_id, academic_year_id, class_id)
-        SELECT st.id, g.id, g.academic_year_id, g.class_id
+        INSERT INTO enrollments (school_id, student_id, class_group_id, academic_year_id, class_id)
+        SELECT g.school_id, st.id, g.id, g.academic_year_id, g.class_id
         FROM jsonb_to_recordset(${tx.json(studentRows)}) AS r(full_name text, grp text)
-        JOIN students st ON st.full_name = r.full_name
+        JOIN students st ON st.full_name = r.full_name AND st.school_id = ${schoolId}::uuid
         JOIN classes c ON c.name = ${GRADE}
-        JOIN class_groups g ON g.class_id = c.id AND g.name = r.grp
+        JOIN class_groups g ON g.class_id = c.id AND g.name = r.grp AND g.school_id = ${schoolId}::uuid
         JOIN academic_years y ON y.id = g.academic_year_id AND y.is_current
         ON CONFLICT DO NOTHING`;
       await tx`
-        INSERT INTO teaching_assignments (teacher_id, class_group_id, academic_year_id, class_id, subject_id)
-        SELECT t.id, g.id, g.academic_year_id, g.class_id, s.id
+        INSERT INTO teaching_assignments (school_id, teacher_id, class_group_id, academic_year_id, class_id, subject_id)
+        SELECT g.school_id, t.id, g.id, g.academic_year_id, g.class_id, s.id
         FROM jsonb_to_recordset(${tx.json(teachingAssignments)}) AS r(subject text, teacher text)
-        JOIN teachers t ON t.full_name = r.teacher
+        JOIN teachers t ON t.full_name = r.teacher AND t.school_id = ${schoolId}::uuid
         JOIN subjects s ON s.name = r.subject
         JOIN classes c ON c.name = ${GRADE}
-        JOIN class_groups g ON g.class_id = c.id
+        JOIN class_groups g ON g.class_id = c.id AND g.school_id = ${schoolId}::uuid
         JOIN academic_years y ON y.id = g.academic_year_id AND y.is_current
         ON CONFLICT DO NOTHING`;
 
       // 5. Weekly timetable (each slot needs an assignment: composite FK)
       await tx`
-        INSERT INTO timetable_entries (class_group_id, academic_year_id, day_of_week, period_no, subject_id, teacher_id)
-        SELECT g.id, g.academic_year_id, r.day, r.period, s.id, ta.teacher_id
+        INSERT INTO timetable_entries (school_id, class_group_id, academic_year_id, day_of_week, period_no, subject_id, teacher_id)
+        SELECT g.school_id, g.id, g.academic_year_id, r.day, r.period, s.id, ta.teacher_id
         FROM jsonb_to_recordset(${tx.json(timetable)}) AS r(grp text, day int, period int, subject text)
         JOIN classes c ON c.name = ${GRADE}
-        JOIN class_groups g ON g.class_id = c.id AND g.name = r.grp
+        JOIN class_groups g ON g.class_id = c.id AND g.name = r.grp AND g.school_id = ${schoolId}::uuid
         JOIN subjects s ON s.name = r.subject
         JOIN teaching_assignments ta ON ta.class_group_id = g.id AND ta.subject_id = s.id
         ON CONFLICT DO NOTHING`;
@@ -167,7 +153,7 @@ export async function GET(request: Request) {
         INSERT INTO attendance (enrollment_id, date, status)
         SELECT e.id, r.on_date::date, r.status
         FROM jsonb_to_recordset(${tx.json(attendance)}) AS r(student text, on_date text, status text)
-        JOIN students st ON st.full_name = r.student
+        JOIN students st ON st.full_name = r.student AND st.school_id = ${schoolId}::uuid
         JOIN enrollments e ON e.student_id = st.id
         ON CONFLICT DO NOTHING`;
 
@@ -180,16 +166,16 @@ export async function GET(request: Request) {
         LEFT JOIN subjects s ON s.name = r.subject
         ON CONFLICT DO NOTHING`;
       await tx`
-        INSERT INTO class_requests (class_id, full_name, phone, status)
-        SELECT c.id, r.full_name, r.phone, r.status
+        INSERT INTO class_requests (school_id, class_id, full_name, phone, status)
+        SELECT ${schoolId}::uuid, c.id, r.full_name, r.phone, r.status
         FROM jsonb_to_recordset(${tx.json(classRequests)}) AS r(cls text, full_name text, phone text, status text)
         JOIN classes c ON c.name = r.cls
-        WHERE NOT EXISTS (SELECT 1 FROM class_requests q WHERE q.class_id = c.id AND q.full_name = r.full_name)`;
+        WHERE NOT EXISTS (SELECT 1 FROM class_requests q WHERE q.school_id = ${schoolId}::uuid AND q.class_id = c.id AND q.full_name = r.full_name)`;
       await tx`
-        INSERT INTO inventory_items (name, unit, quantity, condition)
-        SELECT r.name, r.unit, r.quantity, r.condition
+        INSERT INTO inventory_items (school_id, name, unit, quantity, condition)
+        SELECT ${schoolId}::uuid, r.name, r.unit, r.quantity, r.condition
         FROM jsonb_to_recordset(${tx.json(inventory)}) AS r(name text, unit text, quantity int, condition text)
-        WHERE NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.name = r.name AND i.unit IS NOT DISTINCT FROM r.unit)`;
+        WHERE NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.school_id = ${schoolId}::uuid AND i.name = r.name AND i.unit IS NOT DISTINCT FROM r.unit)`;
 
       // 8. Self-checks
       const bad = await tx`
@@ -210,7 +196,8 @@ export async function GET(request: Request) {
       const [counts] = await tx`
         SELECT (SELECT COUNT(*) FROM students)::int AS students, (SELECT COUNT(*) FROM attendance)::int AS attendance,
                (SELECT COUNT(*) FROM timetable_entries)::int AS timetable_slots`;
-      return { ...counts, provisional_schemes: provisional, subjects_without_scheme: noScheme.length };
+      return { ...counts, provisional_schemes: provisional, subjects_without_scheme: noScheme.length,
+        accounts: [educationDirector.email, schoolDirector.email, admin.email] };
     });
 
     return Response.json({ message: 'Database seeded successfully', ...report });

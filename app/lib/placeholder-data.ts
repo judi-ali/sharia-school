@@ -3,12 +3,15 @@ export const academicYear = {
   start_date: '2026-09-01',
   end_date: '2027-06-30',
   periods_per_day: 7, // Ministry decision, article 2
-  period_minutes: 40, // the school's bell schedule (the ministry decision says 45)
+  period_minutes: 45, // ministry decision; each school's real bell schedule is in bell_schedule
   school_days_per_week: 5, // inferred: 35 weekly periods / 7 per day
 };
 
+// Accounts created by the seed (all use SEED_ADMIN_PASSWORD, default below)
+export const educationDirector = { name: 'مدير التعليم الشرعي', email: 'education@sharia.test' };
+export const schoolDirector = { name: 'مدير المدرسة', email: 'director@school.test' };
 export const admin = {
-  name: 'مدير النظام',
+  name: 'إداري المدرسة',
   email: 'admin@school.test',
   // overridden by SEED_ADMIN_PASSWORD when set
   password: 'ChangeMe123!',
@@ -162,3 +165,17 @@ export const gradingSchemes: GradingScheme[] = baseSchemes.map((s) => {
   return { ...s, pass_mark: NO_PASS_MARK.has(s.subject) ? null : Math.round(s.total * ratio), provisional: PROVISIONAL.has(s.subject) };
 });
 
+
+// Default school day for a new school (7 lessons, two breaks); the school can differ in practice
+export const defaultBellSchedule = [
+  { position: 1, kind: 'assembly', period_no: null as number | null, label: 'الحضور والتهيئة', starts_at: '07:00', ends_at: '07:15', note: 'اجتماع وتزكية' as string | null },
+  { position: 2, kind: 'lesson', period_no: 1, label: 'الحصة الأولى', starts_at: '07:15', ends_at: '07:55', note: null },
+  { position: 3, kind: 'lesson', period_no: 2, label: 'الحصة الثانية', starts_at: '07:55', ends_at: '08:35', note: null },
+  { position: 4, kind: 'break', period_no: null, label: 'الفرصة الأولى', starts_at: '08:35', ends_at: '08:45', note: null },
+  { position: 5, kind: 'lesson', period_no: 3, label: 'الحصة الثالثة', starts_at: '08:45', ends_at: '09:25', note: null },
+  { position: 6, kind: 'lesson', period_no: 4, label: 'الحصة الرابعة', starts_at: '09:25', ends_at: '10:05', note: null },
+  { position: 7, kind: 'break', period_no: null, label: 'الفرصة الثانية', starts_at: '10:05', ends_at: '10:15', note: null },
+  { position: 8, kind: 'lesson', period_no: 5, label: 'الحصة الخامسة', starts_at: '10:15', ends_at: '10:55', note: null },
+  { position: 9, kind: 'lesson', period_no: 6, label: 'الحصة السادسة', starts_at: '10:55', ends_at: '11:35', note: null },
+  { position: 10, kind: 'lesson', period_no: 7, label: 'الحصة السابعة', starts_at: '11:35', ends_at: '12:15', note: null },
+];

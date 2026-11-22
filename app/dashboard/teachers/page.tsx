@@ -25,7 +25,7 @@ export default async function Page(props: { searchParams?: Promise<{ query?: str
           <thead className="border-b border-ink-100 bg-ink-50">
             <tr>
               <th className={th}>الاسم</th><th className={th}>البريد الإلكتروني</th><th className={th}>الهاتف</th>
-              <th className={th}>المواد المسندة</th><th className={th}>الحالة</th><th className={th}><span className="sr-only">إجراءات</span></th>
+              <th className={th}>إجمالي عدد الحصص</th><th className={th}>الحالة</th><th className={th}><span className="sr-only">إجراءات</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-ink-100">
@@ -35,7 +35,7 @@ export default async function Page(props: { searchParams?: Promise<{ query?: str
                 <td className={td}><Link href={`/dashboard/teachers/${t.id}`} className="font-medium hover:underline">{t.full_name}</Link></td>
                 <td className={td} dir="ltr">{t.email ?? '—'}</td>
                 <td className={td} dir="ltr">{t.phone}</td>
-                <td className={td}>{t.subjects}</td>
+                <td className={td}>{t.periods}</td>
                 <td className={td}><Badge tone={t.status === 'active' ? 'good' : 'neutral'}>{personStatusLabel[t.status]}</Badge></td>
                 <td className={td}>
                   <RowActions editHref={`/dashboard/teachers/${t.id}`} onDelete={deleteTeacher.bind(null, t.id)}

@@ -22,3 +22,7 @@ export const generatePagination = (currentPage: number, totalPages: number) => {
   if (currentPage >= totalPages - 2) return [1, 2, '...', totalPages - 2, totalPages - 1, totalPages];
   return [1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages];
 };
+
+// Timestamps (timestamptz) shown in Damascus time
+export const formatDateTime = (d: Date | string) =>
+  new Intl.DateTimeFormat('ar-SY-u-nu-latn', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Damascus' }).format(new Date(d));
