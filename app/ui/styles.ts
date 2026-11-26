@@ -5,5 +5,5 @@ export const btnPrimary =
 export const btnSecondary =
   'inline-flex h-10 items-center justify-center rounded-lg border border-ink-200 bg-white px-4 text-sm font-medium text-ink-800 transition-colors hover:bg-ink-50';
 export const th = 'px-4 py-3 text-start text-xs font-semibold text-ink-700';
-export const td = 'px-4 py-3';
+export const td = 'px-4 py-3 text-right';
 export const tableWrap = 'mt-4 overflow-x-auto rounded-xl border border-ink-100 bg-white';
